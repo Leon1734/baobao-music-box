@@ -1,0 +1,10 @@
+# ===== 宝宝音乐盒 =====
+# 仓库只放轻量源码与数据；大目录 / 生成物不入库
+AudioDock/
+lx-music-desktop/
+photos/
+node_modules/
+__pycache__/
+*.pyc
+*.log
+_verify_*.png

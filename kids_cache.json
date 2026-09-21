@@ -1,0 +1,820 @@
+{
+ "sections": [
+  {
+   "id": "classic",
+   "name": "经典儿歌",
+   "icon": "🐤",
+   "songs": [
+    {
+     "id": "335156693",
+     "songmid": "335156693",
+     "name": "两只老虎",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎儿歌合集|0-8岁经典儿歌大全",
+     "duration": 70,
+     "source": "kw"
+    },
+    {
+     "id": "335156663",
+     "songmid": "335156663",
+     "name": "小兔子乖乖|免费试听",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎儿歌合集|0-8岁经典儿歌大全",
+     "duration": 124,
+     "source": "kw"
+    },
+    {
+     "id": "382044483",
+     "songmid": "382044483",
+     "name": "数鸭子|免费试听",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎经典童谣大全|小兔子乖乖|儿歌大全",
+     "duration": 111,
+     "source": "kw"
+    },
+    {
+     "id": "483039962",
+     "songmid": "483039962",
+     "name": "小星星 (幼儿园早教儿歌)",
+     "artist": "儿歌多多",
+     "album": "儿歌多多幼儿园歌曲|启蒙儿歌",
+     "duration": 128,
+     "source": "kw"
+    },
+    {
+     "id": "335156786",
+     "songmid": "335156786",
+     "name": "虫儿飞|免费试听",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎儿歌合集|0-8岁经典儿歌大全",
+     "duration": 105,
+     "source": "kw"
+    },
+    {
+     "id": "322520080",
+     "songmid": "322520080",
+     "name": "丢手绢",
+     "artist": "儿歌多多",
+     "album": "儿歌多多经典儿歌",
+     "duration": 137,
+     "source": "kw"
+    },
+    {
+     "id": "382044471",
+     "songmid": "382044471",
+     "name": "拔萝卜|免费试听",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎经典童谣大全|小兔子乖乖|儿歌大全",
+     "duration": 107,
+     "source": "kw"
+    },
+    {
+     "id": "335156809",
+     "songmid": "335156809",
+     "name": "小燕子|免费试听",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎儿歌合集|0-8岁经典儿歌大全",
+     "duration": 106,
+     "source": "kw"
+    },
+    {
+     "id": "397242799",
+     "songmid": "397242799",
+     "name": "免费DJ版儿歌串烧-两只老虎|蜗牛与黄鹂乌|捉泥鳅|挖掘机|小白兔白又白|小毛驴|采蘑菇的小姑娘",
+     "artist": "儿歌多多",
+     "album": "儿歌多多DJ儿歌大全|动感儿童音乐",
+     "duration": 226,
+     "source": "kw"
+    },
+    {
+     "id": "407371221",
+     "songmid": "407371221",
+     "name": "最热DJ版儿歌 小兔子乖乖|免费听",
+     "artist": "阅耳亲子&晚安妈妈睡前故事&晚安爸爸",
+     "album": "阅耳经典儿歌·DJ版|儿童舞蹈|幼儿园早操音乐|宝宝巴士同款",
+     "duration": 105,
+     "source": "kw"
+    },
+    {
+     "id": "412504160",
+     "songmid": "412504160",
+     "name": "最热DJ儿歌 数鸭子",
+     "artist": "阅耳亲子",
+     "album": "阅耳经典儿歌·DJ版|儿童舞蹈|幼儿园早操音乐|宝宝巴士同款",
+     "duration": 91,
+     "source": "kw"
+    },
+    {
+     "id": "411232173",
+     "songmid": "411232173",
+     "name": "最热DJ版儿歌 拔萝卜",
+     "artist": "阅耳亲子",
+     "album": "阅耳经典儿歌·DJ版|儿童舞蹈|幼儿园早操音乐|宝宝巴士同款",
+     "duration": 83,
+     "source": "kw"
+    }
+   ]
+  },
+  {
+   "id": "sleep",
+   "name": "哄睡摇篮曲",
+   "icon": "🌙",
+   "songs": [
+    {
+     "id": "322563091",
+     "songmid": "322563091",
+     "name": "摇篮曲|免费听 (哄睡儿歌)",
+     "artist": "儿歌多多",
+     "album": "儿歌多多哄睡儿歌 宝宝睡前神曲",
+     "duration": 127,
+     "source": "kw"
+    },
+    {
+     "id": "407726670",
+     "songmid": "407726670",
+     "name": "舒伯特摇篮曲 (哄睡版)",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎哄睡儿歌",
+     "duration": 136,
+     "source": "kw"
+    },
+    {
+     "id": "649704701",
+     "songmid": "649704701",
+     "name": "勃拉姆斯摇篮曲",
+     "artist": "环尼宝贝",
+     "album": "环尼宝贝精选儿歌365首",
+     "duration": 99,
+     "source": "kw"
+    },
+    {
+     "id": "141289718",
+     "songmid": "141289718",
+     "name": "宝宝睡觉",
+     "artist": "蓝迪",
+     "album": "蓝迪儿歌第二季",
+     "duration": 134,
+     "source": "kw"
+    },
+    {
+     "id": "355945900",
+     "songmid": "355945900",
+     "name": "宝贝摇篮曲(流行儿歌)",
+     "artist": "儿歌多多",
+     "album": "儿歌多多流行儿歌|幼儿园流行|小青蛙呱呱呱",
+     "duration": 160,
+     "source": "kw"
+    },
+    {
+     "id": "360358350",
+     "songmid": "360358350",
+     "name": "小松鼠摇篮曲",
+     "artist": "晚安宝贝",
+     "album": "热门经典儿歌100首|0-7岁儿歌大全|优美旋律|磨耳朵",
+     "duration": 130,
+     "source": "kw"
+    },
+    {
+     "id": "349062463",
+     "songmid": "349062463",
+     "name": "勃拉姆斯：摇篮曲",
+     "artist": "纯音乐钢琴曲",
+     "album": "钢琴曲循环播放 古典纯音乐时刻",
+     "duration": 125,
+     "source": "kw"
+    },
+    {
+     "id": "410758496",
+     "songmid": "410758496",
+     "name": "清唱版宝宝催眠曲  摇篮曲",
+     "artist": "晚安妈妈睡前故事&阅耳亲子",
+     "album": "晚安妈妈·宝宝哄睡助眠曲|经典儿歌清唱版|宝宝巴士同款",
+     "duration": 121,
+     "source": "kw"
+    },
+    {
+     "id": "175823648",
+     "songmid": "175823648",
+     "name": "舒伯特：摇篮曲",
+     "artist": "安静轻音",
+     "album": "温柔如水的古典音乐",
+     "duration": 75,
+     "source": "kw"
+    },
+    {
+     "id": "375412619",
+     "songmid": "375412619",
+     "name": "小白兔白又白（摇篮曲 抒情版）",
+     "artist": "墨墨小熙",
+     "album": "宝宝儿歌大全（多版本）",
+     "duration": 120,
+     "source": "kw"
+    },
+    {
+     "id": "412438113",
+     "songmid": "412438113",
+     "name": "胎心音 独角兽的摇篮曲",
+     "artist": "晚安宝贝",
+     "album": "羊水声长嘘音哄宝宝睡觉觉|白噪音婴儿睡眠·吹风机·胎心音",
+     "duration": 222,
+     "source": "kw"
+    }
+   ]
+  },
+  {
+   "id": "cartoon",
+   "name": "动画主题曲",
+   "icon": "🐷",
+   "songs": [
+    {
+     "id": "69943080",
+     "songmid": "69943080",
+     "name": "Bing Bong Zoo",
+     "artist": "小猪佩奇",
+     "album": "Bing Bong Zoo",
+     "duration": 190,
+     "source": "kw"
+    },
+    {
+     "id": "16140231",
+     "songmid": "16140231",
+     "name": "Paw Patrol",
+     "artist": "The Tibbs",
+     "album": "Paw Patrol",
+     "duration": 111,
+     "source": "kw"
+    },
+    {
+     "id": "22866245",
+     "songmid": "22866245",
+     "name": "超级飞侠",
+     "artist": "罗玮洛&姚斯婷",
+     "album": "超级飞侠",
+     "duration": 123,
+     "source": "kw"
+    },
+    {
+     "id": "275984581",
+     "songmid": "275984581",
+     "name": "伴你成长",
+     "artist": "白挺&熊出没",
+     "album": "熊出没之夺宝熊兵 电影原声带",
+     "duration": 189,
+     "source": "kw"
+    },
+    {
+     "id": "454286528",
+     "songmid": "454286528",
+     "name": "奥特曼 (动感儿歌)",
+     "artist": "环尼宝贝",
+     "album": "奥特曼儿歌专辑|热门儿歌|动漫儿歌",
+     "duration": 148,
+     "source": "kw"
+    },
+    {
+     "id": "69939207",
+     "songmid": "69939207",
+     "name": "Traffic",
+     "artist": "小猪佩奇",
+     "album": "My First Album",
+     "duration": 189,
+     "source": "kw"
+    },
+    {
+     "id": "54976644",
+     "songmid": "54976644",
+     "name": "Pup Pup Boogie",
+     "artist": "Foozlebots",
+     "album": "Pup Pup Boogie",
+     "duration": 100,
+     "source": "kw"
+    },
+    {
+     "id": "284625588",
+     "songmid": "284625588",
+     "name": "一路走好",
+     "artist": "白挺&熊出没",
+     "album": "熊出没之年货 动画电影原声带",
+     "duration": 189,
+     "source": "kw"
+    },
+    {
+     "id": "69939209",
+     "songmid": "69939209",
+     "name": "Peppa Party Time",
+     "artist": "小猪佩奇",
+     "album": "My First Album",
+     "duration": 130,
+     "source": "kw"
+    },
+    {
+     "id": "223174464",
+     "songmid": "223174464",
+     "name": "汪汪队立大功",
+     "artist": "华语群星",
+     "album": "汪汪队立大功",
+     "duration": 40,
+     "source": "kw"
+    },
+    {
+     "id": "390707780",
+     "songmid": "390707780",
+     "name": "《超级飞侠》中文主题曲 (其他)",
+     "artist": "奥飞动漫频道",
+     "album": "奥飞动漫音乐专辑",
+     "duration": 123,
+     "source": "kw"
+    },
+    {
+     "id": "6124408",
+     "songmid": "6124408",
+     "name": "我的甜蜜 (TV Verison)",
+     "artist": "张秉君&熊出没",
+     "album": "",
+     "duration": 85,
+     "source": "kw"
+    },
+    {
+     "id": "69939208",
+     "songmid": "69939208",
+     "name": "Busy Miss Rabbit",
+     "artist": "小猪佩奇",
+     "album": "My First Album",
+     "duration": 139,
+     "source": "kw"
+    },
+    {
+     "id": "370004172",
+     "songmid": "370004172",
+     "name": "第003集 出发！拯救大船",
+     "artist": "天地书苑",
+     "album": "汪汪队立大功（儿童广播多人剧|好故事睡前听）",
+     "duration": 306,
+     "source": "kw"
+    },
+    {
+     "id": "186130188",
+     "songmid": "186130188",
+     "name": "《超级飞侠》超级飞侠第7季片头曲",
+     "artist": "奥飞动漫",
+     "album": "超级飞侠第七季",
+     "duration": 59,
+     "source": "kw"
+    },
+    {
+     "id": "5891257",
+     "songmid": "5891257",
+     "name": "终会与你同行",
+     "artist": "白挺&熊出没",
+     "album": "熊出没之过年 动画电影原声带",
+     "duration": 224,
+     "source": "kw"
+    }
+   ]
+  },
+  {
+   "id": "english",
+   "name": "英文儿歌",
+   "icon": "🔤",
+   "songs": [
+    {
+     "id": "158520176",
+     "songmid": "158520176",
+     "name": "Baby Shark",
+     "artist": "超级宝贝JoJo&宝宝巴士",
+     "album": "超级宝贝JoJo【全网热播】 | 宝贝赳赳 | 宝宝巴士儿歌",
+     "duration": 155,
+     "source": "kw"
+    },
+    {
+     "id": "328115627",
+     "songmid": "328115627",
+     "name": "Finger Family",
+     "artist": "贝瓦儿歌",
+     "album": "贝瓦英文儿歌",
+     "duration": 91,
+     "source": "kw"
+    },
+    {
+     "id": "22860756",
+     "songmid": "22860756",
+     "name": "Twinkle Twinkle Little Star (Videogyan Ver.)",
+     "artist": "海豹Kid儿歌",
+     "album": "海豹Kid英文儿歌系列",
+     "duration": 106,
+     "source": "kw"
+    },
+    {
+     "id": "464095922",
+     "songmid": "464095922",
+     "name": "ABC Song (字母歌)",
+     "artist": "儿歌多多",
+     "album": "儿歌多多英语启蒙儿歌·小班",
+     "duration": 64,
+     "source": "kw"
+    },
+    {
+     "id": "516590189",
+     "songmid": "516590189",
+     "name": "字母歌（ABC song）",
+     "artist": "马沐晨&花果山儿歌",
+     "album": "字母歌（ABC song）",
+     "duration": 96,
+     "source": "kw"
+    },
+    {
+     "id": "557153747",
+     "songmid": "557153747",
+     "name": "Babyshark鲨鱼一家（新编）",
+     "artist": "宝宝巴士",
+     "album": "宝宝巴士经典儿歌|儿童歌曲大全",
+     "duration": 192,
+     "source": "kw"
+    },
+    {
+     "id": "363343168",
+     "songmid": "363343168",
+     "name": "手指家族 The Finger Family",
+     "artist": "儿歌多多",
+     "album": "儿歌多多英语启蒙儿歌| abc字母歌|早教启蒙",
+     "duration": 88,
+     "source": "kw"
+    },
+    {
+     "id": "74574466",
+     "songmid": "74574466",
+     "name": "Baby Shark 鲨鱼宝宝|免费听",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎英文儿歌",
+     "duration": 104,
+     "source": "kw"
+    },
+    {
+     "id": "30366925",
+     "songmid": "30366925",
+     "name": "Twinkle, Twinkle, Little Star",
+     "artist": "Disney",
+     "album": "Children's Favorite Songs, Vol. 1",
+     "duration": 82,
+     "source": "kw"
+    },
+    {
+     "id": "374723565",
+     "songmid": "374723565",
+     "name": "鲨鱼宝宝 Baby Shark",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎英文儿歌大全|英语磨耳朵|早教启蒙儿歌",
+     "duration": 95,
+     "source": "kw"
+    },
+    {
+     "id": "363343207",
+     "songmid": "363343207",
+     "name": "字母歌 ABC Song|免费试听",
+     "artist": "儿歌多多",
+     "album": "儿歌多多英语启蒙儿歌| abc字母歌|早教启蒙",
+     "duration": 64,
+     "source": "kw"
+    }
+   ]
+  },
+  {
+   "id": "guoxue",
+   "name": "启蒙国学",
+   "icon": "📖",
+   "songs": [
+    {
+     "id": "477179867",
+     "songmid": "477179867",
+     "name": "三字经 (人之初 性本善)",
+     "artist": "快乐听儿歌",
+     "album": "三字经（人之初 性本善）",
+     "duration": 138,
+     "source": "kw"
+    },
+    {
+     "id": "51576783",
+     "songmid": "51576783",
+     "name": "弟子规",
+     "artist": "儿歌",
+     "album": "",
+     "duration": 227,
+     "source": "kw"
+    },
+    {
+     "id": "23533320",
+     "songmid": "23533320",
+     "name": "唐诗联唱",
+     "artist": "环尼宝贝",
+     "album": "教学儿歌",
+     "duration": 197,
+     "source": "kw"
+    },
+    {
+     "id": "388780327",
+     "songmid": "388780327",
+     "name": "咏鹅 (骆宾王)(唐诗三百首·儿歌多多·国学启蒙)",
+     "artist": "儿歌多多",
+     "album": "儿歌多多唐诗三百首",
+     "duration": 73,
+     "source": "kw"
+    },
+    {
+     "id": "388780325",
+     "songmid": "388780325",
+     "name": "春晓 (孟浩然)(唐诗三百首·儿歌多多·国学启蒙)",
+     "artist": "儿歌多多",
+     "album": "儿歌多多唐诗三百首",
+     "duration": 73,
+     "source": "kw"
+    },
+    {
+     "id": "238587115",
+     "songmid": "238587115",
+     "name": "童谣：弟子规",
+     "artist": "格子酱讲绘本",
+     "album": "童谣儿歌顺口溜",
+     "duration": 757,
+     "source": "kw"
+    },
+    {
+     "id": "56500069",
+     "songmid": "56500069",
+     "name": "读唐诗",
+     "artist": "邓文怡",
+     "album": "读唐诗",
+     "duration": 219,
+     "source": "kw"
+    },
+    {
+     "id": "426744739",
+     "songmid": "426744739",
+     "name": "小孩儿歌",
+     "artist": "Renaissance Music&唐诗国学&唐诗唱词",
+     "album": "送通禅师还南陵隐静寺",
+     "duration": 240,
+     "source": "kw"
+    },
+    {
+     "id": "402990568",
+     "songmid": "402990568",
+     "name": "二丫三字经1|人之初 性本善",
+     "artist": "二丫讲故事",
+     "album": "二丫三字经|儿童国学启蒙",
+     "duration": 315,
+     "source": "kw"
+    }
+   ]
+  },
+  {
+   "id": "story",
+   "name": "睡前故事",
+   "icon": "📚",
+   "songs": [
+    {
+     "id": "645914329",
+     "songmid": "645914329",
+     "name": "睡前故事. (5475)",
+     "artist": "枕声童梦",
+     "album": "精选儿童睡前故事",
+     "duration": 17,
+     "source": "kw"
+    },
+    {
+     "id": "493128777",
+     "songmid": "493128777",
+     "name": "好饿的毛毛虫",
+     "artist": "挽风儿童有声",
+     "album": "0-6岁绘本故事|儿童故事",
+     "duration": 181,
+     "source": "kw"
+    },
+    {
+     "id": "383994489",
+     "songmid": "383994489",
+     "name": "小牛的魔法镜#绘本故事#儿童睡前故事 #故事大全",
+     "artist": "儿童绘本故事",
+     "album": "",
+     "duration": 171,
+     "source": "kw"
+    },
+    {
+     "id": "650840894",
+     "songmid": "650840894",
+     "name": "睡前故事 (12272)",
+     "artist": "秋舒有声",
+     "album": "儿童哄睡故事，晚安故事",
+     "duration": 16,
+     "source": "kw"
+    },
+    {
+     "id": "459675038",
+     "songmid": "459675038",
+     "name": "27、100个成语故事孟母三迁#绘本故事#儿童成语故事#3-6岁儿童睡前故事推荐#国学文化",
+     "artist": "聆听小故事",
+     "album": "成语故事",
+     "duration": 94,
+     "source": "kw"
+    },
+    {
+     "id": "211396175",
+     "songmid": "211396175",
+     "name": "睡衣小英雄 猫小子的克隆记",
+     "artist": "桂圆妈妈",
+     "album": "【睡衣小英雄】绘本故事 儿童责任感培养（全10册）",
+     "duration": 1031,
+     "source": "kw"
+    },
+    {
+     "id": "211396180",
+     "songmid": "211396180",
+     "name": "睡衣小英雄 猫小子与月光圆顶",
+     "artist": "桂圆妈妈",
+     "album": "【睡衣小英雄】绘本故事 儿童责任感培养（全10册）",
+     "duration": 950,
+     "source": "kw"
+    },
+    {
+     "id": "493129044",
+     "songmid": "493129044",
+     "name": "鼠小弟的小背心",
+     "artist": "挽风儿童有声",
+     "album": "0-6岁绘本故事|儿童故事",
+     "duration": 356,
+     "source": "kw"
+    },
+    {
+     "id": "211396174",
+     "songmid": "211396174",
+     "name": "睡衣小英雄 猫头鹰女直上云霄",
+     "artist": "桂圆妈妈",
+     "album": "【睡衣小英雄】绘本故事 儿童责任感培养（全10册）",
+     "duration": 948,
+     "source": "kw"
+    },
+    {
+     "id": "196938088",
+     "songmid": "196938088",
+     "name": "小牛不怕去打针#早教 #儿童动画 #睡前故事 #绘本故事 #儿童睡前故事大全",
+     "artist": "儿童绘本故事",
+     "album": "",
+     "duration": 52,
+     "source": "kw"
+    }
+   ]
+  },
+  {
+   "id": "artist",
+   "name": "儿歌歌手",
+   "icon": "🎤",
+   "songs": [
+    {
+     "id": "67965109",
+     "songmid": "67965109",
+     "name": "小兔子乖乖",
+     "artist": "宝宝巴士",
+     "album": "宝宝巴士经典儿歌50首",
+     "duration": 93,
+     "source": "kw"
+    },
+    {
+     "id": "359887102",
+     "songmid": "359887102",
+     "name": "我上幼儿园 (幼儿园儿歌)",
+     "artist": "贝乐虎儿歌",
+     "album": "跟着贝乐虎上幼儿园|幼儿安全|启蒙儿歌",
+     "duration": 73,
+     "source": "kw"
+    },
+    {
+     "id": "322563091",
+     "songmid": "322563091",
+     "name": "摇篮曲|免费听 (哄睡儿歌)",
+     "artist": "儿歌多多",
+     "album": "儿歌多多哄睡儿歌 宝宝睡前神曲",
+     "duration": 127,
+     "source": "kw"
+    },
+    {
+     "id": "422486306",
+     "songmid": "422486306",
+     "name": "小星星|免费听 (流行儿歌)",
+     "artist": "环尼宝贝",
+     "album": "2025全新流行儿歌大全|环尼宝贝儿歌|早教儿歌",
+     "duration": 131,
+     "source": "kw"
+    },
+    {
+     "id": "557846038",
+     "songmid": "557846038",
+     "name": "白龙马（新编）",
+     "artist": "宝宝巴士",
+     "album": "宝宝巴士经典儿歌|儿童歌曲大全",
+     "duration": 177,
+     "source": "kw"
+    },
+    {
+     "id": "330926199",
+     "songmid": "330926199",
+     "name": "两只老虎 (幼儿园早教儿歌)",
+     "artist": "儿歌多多",
+     "album": "儿歌多多幼儿园歌曲|启蒙儿歌",
+     "duration": 128,
+     "source": "kw"
+    },
+    {
+     "id": "363327439",
+     "songmid": "363327439",
+     "name": "宝贝宝贝|免费听（经典版）",
+     "artist": "环尼宝贝",
+     "album": "宝贝宝贝儿歌大全",
+     "duration": 118,
+     "source": "kw"
+    },
+    {
+     "id": "557153755",
+     "songmid": "557153755",
+     "name": "春天在哪里（新编）",
+     "artist": "宝宝巴士",
+     "album": "宝宝巴士经典儿歌|儿童歌曲大全",
+     "duration": 164,
+     "source": "kw"
+    },
+    {
+     "id": "386633438",
+     "songmid": "386633438",
+     "name": "快乐起床歌",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎律动儿歌大全|早教音乐",
+     "duration": 88,
+     "source": "kw"
+    },
+    {
+     "id": "330926197",
+     "songmid": "330926197",
+     "name": "鲨鱼宝宝|免费听 (幼儿园早教儿歌)",
+     "artist": "儿歌多多",
+     "album": "儿歌多多幼儿园歌曲|启蒙儿歌",
+     "duration": 121,
+     "source": "kw"
+    },
+    {
+     "id": "558652527",
+     "songmid": "558652527",
+     "name": "大悲咒",
+     "artist": "环尼宝贝",
+     "album": "大悲咒佛教音乐",
+     "duration": 204,
+     "source": "kw"
+    },
+    {
+     "id": "557846058",
+     "songmid": "557846058",
+     "name": "让我们荡起双桨（新编）",
+     "artist": "宝宝巴士",
+     "album": "宝宝巴士经典儿歌|儿童歌曲大全",
+     "duration": 200,
+     "source": "kw"
+    },
+    {
+     "id": "399912818",
+     "songmid": "399912818",
+     "name": "免费|大风车(幼儿园儿歌【中班】)",
+     "artist": "儿歌多多",
+     "album": "儿歌多多中班儿歌|幼儿园歌曲大全",
+     "duration": 61,
+     "source": "kw"
+    },
+    {
+     "id": "375395432",
+     "songmid": "375395432",
+     "name": "捉泥鳅|免费听（热门歌曲版）",
+     "artist": "环尼宝贝",
+     "album": "捉泥鳅儿歌大全",
+     "duration": 120,
+     "source": "kw"
+    },
+    {
+     "id": "557153843",
+     "songmid": "557153843",
+     "name": "上学歌（新编）",
+     "artist": "宝宝巴士",
+     "album": "宝宝巴士经典儿歌|儿童歌曲大全",
+     "duration": 197,
+     "source": "kw"
+    },
+    {
+     "id": "335156752",
+     "songmid": "335156752",
+     "name": "拔萝卜",
+     "artist": "贝乐虎儿歌",
+     "album": "贝乐虎儿歌合集|0-8岁经典儿歌大全",
+     "duration": 107,
+     "source": "kw"
+    }
+   ]
+  }
+ ],
+ "ts": 1790008630,
+ "version": 4
+}
