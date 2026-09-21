@@ -95,11 +95,19 @@ class H(http.server.SimpleHTTPRequestHandler):
             return None
 
     # ====== 照片 ======
+    # 优先返回 photos_web/ 下的压缩版（tools/make_photos_web.py 生成，单张 ~20MB -> ~200KB），
+    # 无压缩版时自动回退原图；网页端无需任何改动（均通过 /api/photos 取图）
     def _photos(self):
         if not PHOTOS.exists(): return []
-        return [{'name': f.stem, 'url': f'/photos/{urllib.parse.quote(f.name)}'}
-                for f in sorted(PHOTOS.iterdir())
-                if f.suffix.lower() in ('.jpg','.jpeg','.png','.gif','.webp')]
+        web = BASE / 'photos_web'
+        out = []
+        for f in sorted(PHOTOS.iterdir()):
+            if f.suffix.lower() not in ('.jpg','.jpeg','.png','.gif','.webp'): continue
+            if (web / (f.stem + '.jpg')).exists():
+                out.append({'name': f.stem, 'url': '/photos_web/' + urllib.parse.quote(f.stem + '.jpg')})
+            else:
+                out.append({'name': f.stem, 'url': '/photos/' + urllib.parse.quote(f.name)})
+        return out
 
     # ====== 本地音乐 ======
     def _local_music(self):
