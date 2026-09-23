@@ -44,19 +44,37 @@ HYW_API = "http://103.79.184.97"
 _DEFAULT_HYW_KEY = ""    # 公开仓库里留空；私用可在 config.json 配置
 
 def _load_hyw_key():
+    """密钥取值优先级：环境变量 > exe 同级 config.json > 打包内置 config.json
+    （内置的那份是为了「免安装包开箱即用」；公开仓库的源码里不含它）"""
     k = os.environ.get('MB_HYW_KEY', '').strip()
     if k:
         return k
-    try:
-        cfg = json.loads((DATA_DIR / "config.json").read_text('utf-8'))
-        k = str(cfg.get('hyw_key', '')).strip()
-        if k:
-            return k
-    except Exception:
-        pass
+    for cfg_path in (DATA_DIR / "config.json", RES_DIR / "config.json"):
+        try:
+            cfg = json.loads(cfg_path.read_text('utf-8'))
+            k = str(cfg.get('hyw_key', '')).strip()
+            if k:
+                return k
+        except Exception:
+            pass
     return _DEFAULT_HYW_KEY
 
 HYW_KEY = _load_hyw_key()
+
+
+def _seed_kids_cache():
+    """首次运行：把打包内预热的 kids_cache.json 播种到数据目录。
+    exe 用户第一次打开「儿童乐园」本来要等十几秒去上游重建，播种后立即有内容。"""
+    try:
+        if KIDS_CACHE_FILE.exists():
+            return
+        src = RES_DIR / "kids_cache.json"
+        if src.exists() and src.resolve() != KIDS_CACHE_FILE.resolve():
+            KIDS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            KIDS_CACHE_FILE.write_bytes(src.read_bytes())
+            print("[KIDS] 已用内置预热门类初始化缓存", flush=True)
+    except Exception as e:
+        print(f"[KIDS] 预热播种失败（不影响使用）: {e}", flush=True)
 
 # ============ 错误日志（写文件，方便 exe 用户反馈问题） ============
 ERROR_LOG = DATA_DIR / "error.log"
@@ -274,18 +292,35 @@ class H(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     # ====== 照片 ======
-    # 优先返回 photos_web/ 下的压缩版（tools/make_photos_web.py 生成，单张 ~20MB -> ~200KB），
-    # 无压缩版时自动回退原图；网页端无需任何改动（均通过 /api/photos 取图）
+    # 来源优先级：exe/脚本同级的 photos、photos_web（用户自己放的）
+    #             → 打包内置的 photos_web（随 exe 分发，开箱即有轮播）
+    # 展示时优先用 photos_web/ 的压缩版（单张 ~200KB），没有才回退原图。
     def _photos(self):
-        if not PHOTOS.exists(): return []
-        web = BASE / 'photos_web'
-        out = []
-        for f in sorted(PHOTOS.iterdir()):
-            if f.suffix.lower() not in ('.jpg','.jpeg','.png','.gif','.webp'): continue
-            if (web / (f.stem + '.jpg')).exists():
-                out.append({'name': f.stem, 'url': '/photos_web/' + urllib.parse.quote(f.stem + '.jpg')})
-            else:
-                out.append({'name': f.stem, 'url': '/photos/' + urllib.parse.quote(f.name)})
+        web_dirs = [BASE / 'photos_web', RES_DIR / 'photos_web']
+        src_dirs = [PHOTOS, RES_DIR / 'photos']
+        IMG = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
+        out, seen = [], set()
+        # 1) 原图：有压缩版就用压缩版，否则用原图
+        for d in src_dirs:
+            if not d.exists(): continue
+            for f in sorted(d.iterdir()):
+                if f.suffix.lower() not in IMG or f.stem in seen: continue
+                seen.add(f.stem)
+                web = None
+                for wd in web_dirs:
+                    p = wd / (f.stem + '.jpg')
+                    if p.exists(): web = p; break
+                if web:
+                    out.append({'name': f.stem, 'url': '/photos_web/' + urllib.parse.quote(web.name)})
+                else:
+                    out.append({'name': f.stem, 'url': '/photos/' + urllib.parse.quote(f.name)})
+        # 2) 只有压缩版（打包内置、用户没放原图）也算一张
+        for d in web_dirs:
+            if not d.exists(): continue
+            for f in sorted(d.iterdir()):
+                if f.suffix.lower() not in IMG or f.stem in seen: continue
+                seen.add(f.stem)
+                out.append({'name': f.stem, 'url': '/photos_web/' + urllib.parse.quote(f.name)})
         return out
 
     # ====== 本地音乐 ======
@@ -303,10 +338,19 @@ class H(http.server.SimpleHTTPRequestHandler):
 
     # ====== 音源文件列表 ======
     def _sources(self):
-        if not SOURCES.exists(): return []
-        return [{'name':f.stem,'size':f.stat().st_size}
-                for f in sorted(SOURCES.iterdir())
-                if f.is_file() and f.suffix=='.js' and f.stat().st_size > 1000]
+        """音源文件：exe 同级的 音源/ 优先，其次打包内置的 音源/"""
+        out, seen = [], set()
+        for d in [SOURCES, RES_DIR / '音源']:
+            if not d.exists(): continue
+            for f in sorted(d.iterdir()):
+                try:
+                    if not f.is_file() or f.suffix != '.js' or f.stat().st_size <= 1000: continue
+                except OSError:
+                    continue
+                if f.stem in seen: continue
+                seen.add(f.stem)
+                out.append({'name': f.stem, 'size': f.stat().st_size})
+        return out
 
     # ====== 在线搜索 (酷我) ======
     def _search(self, kw, src='kw', limit=30, page=1):
@@ -787,6 +831,7 @@ class H(http.server.SimpleHTTPRequestHandler):
 
     def _health(self):
         return {'ok': True, 'app': 'baobao-music', 'port': PORT,
+                'data_dir': str(DATA_DIR),
                 'photos': len(self._photos()), 'local_songs': len(self._local_music()),
                 'kids_sections': len(_kids_state['data'] or []),
                 'kids_age_s': int(time.time() - _kids_state['ts']) if _kids_state['ts'] else None,
@@ -908,17 +953,31 @@ def _lyric_cache_flusher():
 
 _srv = None          # 当前 Server 实例（None = 未启动/已关闭）
 
+class _Srv(socketserver.ThreadingTCPServer):
+    """Windows 上 allow_reuse_address=True 会让第二个实例也绑上同一端口，
+    结果两个进程互抢请求（用户看到的是「时而正常时而打不开」）。
+    所以 Windows 下必须关掉它，让端口冲突直接报错、由上层给出明确提示。"""
+    allow_reuse_address = (os.name != 'nt')
+    daemon_threads = True
+
+
 def _serve_worker():
     """实际服务循环：跑在独立线程里，任何异常都自愈重试，绝不静默退出"""
     global _srv
     while True:
         try:
-            srv = socketserver.ThreadingTCPServer(("", PORT), H)
-            srv.daemon_threads = True          # 处理线程设为守护，退出时不被卡住
+            srv = _Srv(("", PORT), H)
             _srv = srv
             print(f"宝宝音乐盒 v3 启动! http://localhost:{PORT}/player.html", flush=True)
             srv.serve_forever(poll_interval=0.5)
             return                              # 正常返回 = 被 shutdown，交给主线程决定
+        except OSError as e:
+            # 端口已被占用（另一个实例还活着）：不要静默重试到天荒地老，
+            # 也不要抢端口 —— 直接告诉用户去看那个实例。
+            print(f"[提示] 端口 {PORT} 已被占用，无法启动：{e}", flush=True)
+            print(f"       可能已有一个宝宝音乐盒在运行。先关掉它的窗口再试，", flush=True)
+            print(f"       或者换个端口：宝宝音乐盒.exe --port 9000", flush=True)
+            return
         except Exception as e:
             print(f'[FATAL] 服务异常: {type(e).__name__}: {e} —— 2 秒后重启', flush=True)
             if _srv is not None:
@@ -942,13 +1001,27 @@ def serve():
     """启动服务（阻塞）。源码运行和被 exe 调用都走这里。"""
     os.chdir(str(BASE))
     if _already_running():
-        print(f"检测到服务已在运行（端口 {PORT}），本实例退出，直接使用：", flush=True)
-        print(f"  http://localhost:{PORT}/player.html", flush=True)
+        print(f"[提示] 已经有一个宝宝音乐盒在运行了（端口 {PORT}），本实例不重复启动。", flush=True)
+        try:
+            import urllib.request as _u
+            with _u.urlopen(f"http://127.0.0.1:{PORT}/api/health", timeout=2) as r:
+                _d = json.loads(r.read().decode('utf-8'))
+            _other = _d.get('data_dir', '')
+            if _other and os.path.normcase(_other) != os.path.normcase(str(DATA_DIR)):
+                print(f"       注意：正在运行的那个用的是另一个目录：", flush=True)
+                print(f"         {_other}", flush=True)
+                print(f"       而当前目录是：{DATA_DIR}", flush=True)
+                print(f"       它的照片/音源来自上面那个目录；想用当前目录，", flush=True)
+                print(f"       请先关掉那个窗口再启动本程序。", flush=True)
+        except Exception:
+            pass
+        print(f"       直接访问：http://localhost:{PORT}/player.html", flush=True)
         return False
     if not HYW_KEY:
         print("[提示] 未配置音源密钥（config.json 里的 hyw_key），在线取播放链接可能失败。", flush=True)
         print("       在线搜索/榜单仍可用，本地音乐播放不受影响。", flush=True)
     _lyric_cache_load()
+    _seed_kids_cache()
     threading.Thread(target=_lyric_cache_flusher, daemon=True).start()
     # 服务线程 + 主线程守护：子线程无论因何退出（异常/端口被占/未知错误），
     # 主线程都能把它重新拉起，进程永不静默死掉

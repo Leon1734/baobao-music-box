@@ -15,12 +15,8 @@ photos_web/
 !photos/README.md
 
 # ---- 第三方音源文件（含第三方 API 密钥，且非本项目代码）----
-音源/*.js
-音源/*.json
-音源/*.rs
-音源/*.md
-音源/*.html
-音源/*.txt
+# 用 目录/* 而不是 目录/ ：前者只排除目录内文件，! 例外规则才能生效
+音源/*
 !音源/README.md
 
 # ---- 运行时生成的数据 ----
@@ -34,6 +30,8 @@ build/
 dist/
 *.spec
 app.ico
+release_pkg/
+*.exe
 
 # ---- 克隆的参考项目 / 依赖 ----
 AudioDock/

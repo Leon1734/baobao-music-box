@@ -44,6 +44,27 @@ def _port_free(port):
         s.close()
 
 
+def _probe_app(port, timeout=1.5):
+    """探测某端口上是不是宝宝音乐盒；是就返回它的 health，否则 None"""
+    import json as _json
+    import urllib.request as _u
+    try:
+        with _u.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=timeout) as r:
+            d = _json.loads(r.read().decode("utf-8"))
+        return d if d.get("app") == "baobao-music" else None
+    except Exception:
+        return None
+
+
+def _find_running_instance(start=8082, span=8):
+    """在默认端口附近找已在运行的实例，返回 (port, health) 或 (None, None)"""
+    for p in range(start, start + span * 10, 10):
+        h = _probe_app(p)
+        if h:
+            return p, h
+    return None, None
+
+
 def _pick_port(start=8082, tries=8):
     """端口被占就往上找，最多试 tries 个"""
     for p in range(start, start + tries * 10, 10):
@@ -52,19 +73,34 @@ def _pick_port(start=8082, tries=8):
     return start
 
 
-def _wait_and_open(port, timeout=30):
-    """等服务真的起来了再开浏览器，避免打开一个「无法访问」的页面"""
+def _wait_and_open(port, timeout=45):
+    """等服务真的能响应了再开浏览器。
+
+    原来用「端口是否被占」判断就绪 —— 在 Windows 上不可靠：
+    另一个实例（或别的程序）占着端口时也会显示「已就绪」，
+    而自己的服务其实没起来。改为直接问 /api/health，拿到 app 标识才算就绪。
+    """
+    import json as _json
+    import urllib.request as _u
     t0 = time.time()
+    url = f"http://127.0.0.1:{port}/api/health"
     while time.time() - t0 < timeout:
-        if not _port_free(port):          # 端口被占用 = 服务已监听
-            time.sleep(0.4)
-            try:
-                webbrowser.open(f"http://localhost:{port}/player.html")
-            except Exception:
-                pass
-            return
+        try:
+            with _u.urlopen(url, timeout=2) as r:
+                d = _json.loads(r.read().decode("utf-8"))
+            if d.get("app") == "baobao-music":
+                time.sleep(0.2)
+                try:
+                    webbrowser.open(f"http://localhost:{port}/player.html")
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
         time.sleep(0.3)
-    print(f"[警告] 等待服务超时，请手动打开 http://localhost:{port}/player.html", flush=True)
+    print(f"[警告] 服务在 {timeout} 秒内没有就绪。", flush=True)
+    print(f"       请手动打开：http://localhost:{port}/player.html", flush=True)
+    print(f"       若仍打不开，试试换端口：宝宝音乐盒.exe --port 9000", flush=True)
 
 
 def _pause_if_launched_by_double_click():
@@ -78,8 +114,60 @@ def _pause_if_launched_by_double_click():
         pass
 
 
+def _parse_args(argv):
+    """命令行参数：--port N / --no-browser / --help"""
+    port, no_browser = None, False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-p", "--port") and i + 1 < len(argv):
+            try:
+                port = int(argv[i + 1]); i += 2; continue
+            except ValueError:
+                print(f"[错误] 端口必须是数字：{argv[i + 1]}", flush=True)
+                return None, None
+        elif a.startswith("--port="):
+            try:
+                port = int(a.split("=", 1)[1])
+            except ValueError:
+                print(f"[错误] 端口必须是数字：{a}", flush=True)
+                return None, None
+        elif a in ("--no-browser", "-n"):
+            no_browser = True
+        elif a in ("-h", "--help"):
+            print(BANNER)
+            print("  用法:  宝宝音乐盒.exe [选项]")
+            print("    -p, --port N     指定端口（默认 8082，被占用则往上找）")
+            print("    -n, --no-browser 不自动打开浏览器")
+            print("    -h, --help       显示本帮助")
+            print("\n  也可以用环境变量 MB_PORT 指定端口。")
+            return "help", None
+        i += 1
+    return port, no_browser
+
+
 def main():
     print(BANNER)
+    arg_port, no_browser = _parse_args(sys.argv[1:])
+    if arg_port == "help":
+        return 0
+
+    # 已经有实例在跑？直接把浏览器打开到它，不再起第二个 —— 双击第二次的用户
+    # 本来就会看到两个黑窗口、两个页面，很困惑。用户显式指定了端口就跳过这一步。
+    if not arg_port and not os.environ.get('MB_PORT'):
+        rp, rh = _find_running_instance()
+        if rp:
+            print(f"[提示] 宝宝音乐盒已经在运行了（端口 {rp}），直接打开它。", flush=True)
+            print(f"       它的数据目录：{(rh or {}).get('data_dir')}", flush=True)
+            print(f"       想重新启动，请先关掉那个窗口，再双击本程序。", flush=True)
+            if not no_browser:
+                try:
+                    webbrowser.open(f"http://localhost:{rp}/player.html")
+                except Exception:
+                    pass
+            _pause_if_launched_by_double_click()
+            return 0
+
     try:
         import server
     except Exception:
@@ -88,9 +176,10 @@ def main():
         _pause_if_launched_by_double_click()
         return 1
 
-    port = int(os.environ.get('MB_PORT', 0)) or _pick_port(8082)
+    # 端口优先级：命令行 --port > 环境变量 MB_PORT > 自动挑（8082 起）
+    port = arg_port or int(os.environ.get('MB_PORT', 0)) or _pick_port(8082)
     if port != 8082:
-        print(f"[信息] 8082 被占用，改用端口 {port}")
+        print(f"[信息] 使用端口 {port}")
     server.PORT = port
     os.environ['MB_PORT'] = str(port)
 
@@ -101,7 +190,8 @@ def main():
     print("  停止服务: 关闭本窗口（或按 Ctrl+C）")
     print("=" * 46, flush=True)
 
-    threading.Thread(target=_wait_and_open, args=(port,), daemon=True).start()
+    if not no_browser:
+        threading.Thread(target=_wait_and_open, args=(port,), daemon=True).start()
 
     try:
         server.serve()
