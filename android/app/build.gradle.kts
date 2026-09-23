@@ -49,11 +49,7 @@ chaquopy {
         // server.py 只用标准库（http.server / socketserver / urllib / ssl / threading），
         // 所以这里不需要 pip install 任何东西 —— 包体积和构建时间都省下来了
     }
-    sourceSets {
-        getByName("main") {
-            srcDir("src/main/python")
-        }
-    }
+    // python 源码目录用默认的 src/main/python，不用额外声明
 }
 
 dependencies {

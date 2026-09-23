@@ -7,27 +7,46 @@
 
 ---
 
-## 两种用法
+## 三个平台
 
-### 方式一：直接用 exe（推荐，免安装）
+| 平台 | 产物 | 说明 |
+|------|------|------|
+| **Windows** | [`宝宝音乐盒.exe`](../../releases) | 双击即用，免安装免 Python |
+| **Android** | `*.apk`（Releases 或 Actions 产物） | 侧载安装，Android 7.0+ |
+| **源码** | `python app.py` | 需要 Python 3.8+ |
 
-1. 从 [Releases](../../releases) 下载 `宝宝音乐盒.exe`
+### Windows：直接用 exe（推荐）
+
+1. 从 [Releases](../../releases) 下载 `baobao-music-box-v1.1.0-win64.exe`
 2. 双击运行 —— 直接弹出**原生播放器窗口**（Edge WebView2 内核，不是浏览器标签页）
 3. 关掉窗口即退出
 
-> 不需要装 Python，不需要装任何东西。exe 约 31MB（内含照片/音源/密钥，开箱即用）。
-> 没有 WebView2 运行时时会自动退回默认浏览器，或用 `--browser` 强制浏览器模式。
+> 不需要装 Python，不需要装任何东西。exe 约 31MB（内含照片/音源，开箱即用）。
+> 首次启动等 10-20 秒（PyInstaller 解包 + 杀软扫描），之后就快了。
 
-### 方式二：源码运行
+### Android：装 APK
+
+从 Releases 下载 `baobao-music-box-v1.1.0-android.apk`，在手机上点开安装
+（需要允许「安装未知来源应用」）。
+
+> 安卓版把同一份 `server.py` 用 [Chaquopy](https://chaquo.com/chaquopy/) 跑在 APK 里，
+> WebView 指向 `127.0.0.1:8082` —— **和 Windows 版共用同一套播放器代码**，行为一致。
+> 构建走 GitHub Actions（本地不需要 Android SDK）。
+
+### 源码运行
 
 ```bash
-python app.py          # 自动选端口 + 弹原生窗口
-python app.py --browser  # 用浏览器打开
-# 或
-python server.py       # 只起服务，手动访问 http://localhost:8082/player.html
+python app.py            # 自动选端口 + 弹原生窗口
+python server.py         # 只起服务，手动访问 http://localhost:8082/player.html
 ```
 
 Windows 用户可以直接双击 `启动音乐盒.bat` / `停止音乐盒.bat`。
+
+**安卓工程**在 `android/`。改动 `player.html` 或 `server.py` 后跑一次同步脚本：
+
+```bash
+python tools/sync_android_assets.py
+```
 
 ---
 
@@ -43,20 +62,21 @@ config.json      ← 配置音源密钥（见下）
 error.log        ← 出问题时自动生成，反馈时把它发出来
 ```
 
-程序**优先用 exe 同级目录**的内容，找不到才用打包内置的那份。所以：
+程序**优先用同级目录**的内容，找不到才用打包内置的那份。所以：
 
 - 换成你自己的照片/音源，会覆盖内置的那份
-- exe 里已经带了照片/音源/密钥，直接转发给别人即可开箱使用
+- exe 里已经带了照片/音源，直接转发给别人即可开箱使用
 
 ---
 
-## 在线播放配置
+## 在线播放
 
-在线搜索、榜单、推荐**开箱即用**（走公开接口）。
+在线搜索、榜单、推荐、在线播放**全部开箱即用**，不需要配置任何东西。
 
-打包好的 exe 里**已经带了音源密钥**，开箱就能在线播放。
+音源接口对 320k 播放不校验密钥，所以公开分发的包里**不含任何第三方凭据**
+（实测：不带密钥和带密钥，同一批歌都返回 200）。
 
-从源码运行时需要自己配置密钥，放在 `config.json`：
+如果你有自己的密钥，想用上（例如更高音质），放在 `config.json`：
 
 ```bash
 cp config.example.json config.json
@@ -68,10 +88,11 @@ cp config.example.json config.json
 }
 ```
 
-也可以用环境变量：`MB_HYW_KEY=xxx`
+也可以用环境变量：`MB_HYW_KEY=xxx`。自己私用想打进 exe：
+`python build_exe.py --with-key`。
 
-> 不配置也能用：本地音乐正常播放，在线搜索/浏览正常，只是点播时会提示取链接失败。
-> 程序内置了降级链：HYW 音源 → 酷我直链兜底，所以密钥缺失时仍有较大概率能播。
+> 取链接有降级链：音源 API（8 秒超时）→ 酷我直链兜底（<1s）→ 音源重试。
+> 上游不稳定时会自动换源。
 
 ---
 
