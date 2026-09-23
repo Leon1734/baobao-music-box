@@ -1,0 +1,2 @@
+pywebview>=5.0
+# 可选：源码模式下弹原生窗口需要（Windows 还需 Edge WebView2 运行时，Win10/11 自带）

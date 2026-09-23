@@ -42,8 +42,17 @@ BUNDLE_OPT = [
     "config.json",          # 有就打进去（密钥）；没有也能打，只是在线播放要用户自己配
 ]
 
+# pywebview 的原生窗口需要这些（不带上就退化成浏览器模式）
+PYWEBVIEW_HIDDEN = [
+    "clr",                                  # pythonnet，Edge 后端靠它调 .NET
+    "webview.platforms.edgechromium",
+    "webview.platforms.winforms",
+]
+
 
 def main():
+    debug_console = "--debug-console" in sys.argv     # 排障时用，默认无控制台
+
     missing = [f for f in BUNDLE if not (HERE / f).exists()]
     if missing:
         print(f"[错误] 缺少资源文件: {missing}")
@@ -57,14 +66,18 @@ def main():
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",                  # 单文件
-        "--console",                  # 保留控制台：用户能看到日志，关窗即停服务
+        "--console" if debug_console else "--windowed",   # 默认无控制台 = 像个正经 App
         "--noconfirm",
         "--clean",
         "--name", NAME,
         "--distpath", str(HERE / "dist"),
         "--workpath", str(HERE / "build"),
         "--specpath", str(HERE / "build"),
+        "--collect-all", "webview",           # pywebview 的 lib/ (WebView2 DLL) 与 js/
+        "--collect-all", "pythonnet",         # pythonnet 运行时 DLL
     ]
+    for h in PYWEBVIEW_HIDDEN:
+        cmd += ["--hidden-import", h]
     if (HERE / "app.ico").exists():
         cmd += ["--icon", str(HERE / "app.ico")]
     for f in BUNDLE:
@@ -88,7 +101,8 @@ def main():
 
     cmd.append(str(HERE / "app.py"))
 
-    print("\n执行:", " ".join(cmd[:8]), "…")
+    print(f"\n模式: {'控制台(排障)' if debug_console else '无控制台(原生窗口 App)'}")
+    print("执行:", " ".join(cmd[:9]), "…")
     r = subprocess.run(cmd, cwd=str(HERE))
     if r.returncode != 0:
         print("[失败] PyInstaller 返回非零退出码")
@@ -103,8 +117,8 @@ def main():
     print(f"\n✅ 打包完成: {exe}")
     print(f"   体积: {size_mb:.1f} MB")
     print(f"\n分发方式：把这个 exe 单独发给别人即可（免安装、免 Python）。")
+    print(f"双击弹出原生窗口（Edge WebView2 内核），不是浏览器标签页。")
     print(f"照片、音源、密钥都已打进 exe —— 双击就有轮播和在线播放。")
-    print(f"用户想加自己的照片/音源，在 exe 旁边建 photos/ 或 音源/ 即可（同级优先）。")
     return 0
 
 

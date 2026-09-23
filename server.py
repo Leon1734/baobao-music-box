@@ -390,18 +390,28 @@ class H(http.server.SimpleHTTPRequestHandler):
             quality = '320k'
 
         # 方式1: 通过HYW音源API
+        # HYW 服务器时快时慢（实测 0.3s ~ 12s），所以：
+        #   短超时先试一次 → 慢/失败就立刻走下面的酷我直链兜底（通常 <1s）
+        #   → 兜底也不行再回来用长超时重试一次 HYW
         params = {'songId': sid, 'source': src, 'key': HYW_KEY, 'quality': quality}
         if name: params['name'] = name
         if artist: params['artist'] = artist
         query = '&'.join(f'{k}={urllib.parse.quote(str(v))}' for k,v in params.items() if v)
         url = f'{HYW_API}/api/music/url?{query}'
-        d = self._get(url)
-        if d and d.get('code') == 200:
-            result = d.get('url') or d.get('data') or ''
-            if isinstance(result, str) and result.startswith('http'):
-                return {'url': result, 'source': 'hyw', 'quality': d.get('actualQuality', quality)}
-            elif isinstance(result, dict) and result.get('url'):
-                return {'url': result['url'], 'source': 'hyw', 'quality': d.get('actualQuality', quality)}
+
+        def _hyw(timeout):
+            d = self._get(url, timeout=timeout)
+            if d and d.get('code') == 200:
+                result = d.get('url') or d.get('data') or ''
+                if isinstance(result, str) and result.startswith('http'):
+                    return {'url': result, 'source': 'hyw', 'quality': d.get('actualQuality', quality)}
+                if isinstance(result, dict) and result.get('url'):
+                    return {'url': result['url'], 'source': 'hyw', 'quality': d.get('actualQuality', quality)}
+            return None
+
+        fast = _hyw(8)
+        if fast:
+            return fast
 
         # 方式2: 网易云直链
         if src in ('wy', 'netease'):
@@ -420,6 +430,11 @@ class H(http.server.SimpleHTTPRequestHandler):
                     return {'url': txt, 'source': 'kw-direct'}
             except Exception as e:
                 print(f'[URL] 酷我直链兜底失败: {e}')
+
+        # 方式4: HYW 长超时再试一次（上面只是短超时没等到，不代表它真挂了）
+        slow = _hyw(20)
+        if slow:
+            return slow
 
         return {'error': '无法获取播放链接'}
 
@@ -952,6 +967,7 @@ def _lyric_cache_flusher():
             pass
 
 _srv = None          # 当前 Server 实例（None = 未启动/已关闭）
+_fatal_stop = False  # True = 遇到不可恢复的错误（如端口被占），watchdog 不要再重启
 
 class _Srv(socketserver.ThreadingTCPServer):
     """Windows 上 allow_reuse_address=True 会让第二个实例也绑上同一端口，
@@ -973,7 +989,9 @@ def _serve_worker():
             return                              # 正常返回 = 被 shutdown，交给主线程决定
         except OSError as e:
             # 端口已被占用（另一个实例还活着）：不要静默重试到天荒地老，
-            # 也不要抢端口 —— 直接告诉用户去看那个实例。
+            # 也不要抢端口 —— 直接告诉用户去看那个实例，并让 watchdog 停止重启。
+            global _fatal_stop
+            _fatal_stop = True
             print(f"[提示] 端口 {PORT} 已被占用，无法启动：{e}", flush=True)
             print(f"       可能已有一个宝宝音乐盒在运行。先关掉它的窗口再试，", flush=True)
             print(f"       或者换个端口：宝宝音乐盒.exe --port 9000", flush=True)
@@ -1032,6 +1050,9 @@ def serve():
             _t.join()
         except KeyboardInterrupt:
             print('\n[MB] 收到退出信号，关闭服务', flush=True)
+            break
+        if _fatal_stop:
+            # 端口被占这类不可恢复的错误：别再循环刷屏，直接退出让用户看到提示
             break
         print('[WATCHDOG] 服务线程已退出，2 秒后自动重启…', flush=True)
         time.sleep(2)
