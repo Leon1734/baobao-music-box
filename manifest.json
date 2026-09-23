@@ -1,0 +1,23 @@
+{
+  "name": "宝宝音乐盒",
+  "short_name": "音乐盒",
+  "description": "本地+在线音乐播放器 · LX音源驱动 · 支持儿歌专区、逐行歌词、10段均衡器",
+  "start_url": "/player.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1A1A2E",
+  "theme_color": "#FF6B9D",
+  "lang": "zh-CN",
+  "categories": ["music", "entertainment"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "儿童乐园", "short_name": "儿歌", "url": "/player.html#kids" },
+    { "name": "在线搜索", "short_name": "搜索", "url": "/player.html#search" },
+    { "name": "我喜欢", "short_name": "收藏", "url": "/player.html#liked" }
+  ]
+}

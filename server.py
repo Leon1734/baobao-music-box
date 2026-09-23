@@ -2,14 +2,82 @@
 宝宝音乐盒 v3 - 完整版
 HYW音源API直接调用 + 酷我API + 本地文件
 """
-import http.server, socketserver, os, json, urllib.parse, urllib.request, ssl, threading, time
+import http.server, socketserver, os, json, sys, urllib.parse, urllib.request, ssl, threading, time, concurrent.futures
 from pathlib import Path
 
 PORT = int(os.environ.get('MB_PORT', 8082))   # 可用环境变量换端口，避免多实例端口冲突
-BASE = Path(__file__).parent
-PHOTOS = BASE / "photos"
-SOURCES = BASE / "音源"
-KIDS_CACHE_FILE = BASE / "kids_cache.json"
+
+def _resolve_dirs():
+    """解析 资源目录(只读) 与 数据目录(可写)，兼容源码运行和 PyInstaller 打包：
+      · 源码运行：两者都是脚本所在目录
+      · exe 运行：资源在 PyInstaller 解包目录(_MEIPASS)，
+                  数据(照片/音源/缓存)在 exe 同级目录，方便用户自己放文件
+    """
+    if getattr(sys, 'frozen', False):
+        res = Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent))
+        data = Path(sys.executable).parent
+    else:
+        res = data = Path(__file__).parent
+    return res, data
+
+RES_DIR, DATA_DIR = _resolve_dirs()
+BASE = DATA_DIR          # 兼容旧代码：可写数据都放这里
+PHOTOS = DATA_DIR / "photos"
+SOURCES = DATA_DIR / "音源"
+KIDS_CACHE_FILE = DATA_DIR / "kids_cache.json"
+
+def _resource(*names):
+    """找只读资源：优先数据目录（用户可覆盖/自定义），退回打包内资源"""
+    for n in names:
+        p = DATA_DIR / n
+        if p.exists():
+            return p
+    for n in names:
+        p = RES_DIR / n
+        if p.exists():
+            return p
+    return RES_DIR / names[0]
+
+# HYW 音源密钥：不写死在源码里（会随仓库公开）。
+# 取值优先级：环境变量 > 同级 config.json > 内置默认值
+HYW_API = "http://103.79.184.97"
+_DEFAULT_HYW_KEY = ""    # 公开仓库里留空；私用可在 config.json 配置
+
+def _load_hyw_key():
+    k = os.environ.get('MB_HYW_KEY', '').strip()
+    if k:
+        return k
+    try:
+        cfg = json.loads((DATA_DIR / "config.json").read_text('utf-8'))
+        k = str(cfg.get('hyw_key', '')).strip()
+        if k:
+            return k
+    except Exception:
+        pass
+    return _DEFAULT_HYW_KEY
+
+HYW_KEY = _load_hyw_key()
+
+# ============ 错误日志（写文件，方便 exe 用户反馈问题） ============
+ERROR_LOG = DATA_DIR / "error.log"
+_log_lock = threading.Lock()
+
+def _log_error(msg):
+    """把异常写到 error.log（同时打屏）。exe 模式下用户看不到堆栈，落盘才查得到。"""
+    line = f'{time.strftime("%Y-%m-%d %H:%M:%S")} {msg}\n'
+    try:
+        with _log_lock:
+            # 超过 1MB 就轮转一次，避免无限增长
+            if ERROR_LOG.exists() and ERROR_LOG.stat().st_size > 1048576:
+                ERROR_LOG.replace(ERROR_LOG.with_suffix('.log.1'))
+            with open(ERROR_LOG, 'a', encoding='utf-8') as f:
+                f.write(line)
+    except Exception:
+        pass
+    try:
+        print(msg, flush=True)
+    except Exception:
+        pass
 
 # ============ 儿童专区分区表（关键词已实测有结果，见 DEVELOPMENT_PLAN_v4.md） ============
 # ⚠ 酷我搜索接口并发会被限流（并发=空结果），必须串行+间隔+缓存
@@ -33,19 +101,98 @@ KIDS_TTL = 6 * 3600          # 分区缓存有效期 6 小时
 _kids_lock = threading.Lock()
 _kids_state = {'data': None, 'ts': 0, 'refreshing': False}
 
+# 歌词缓存（内存 + 磁盘）：歌词来源链最长要十几秒，缓存后二次播放瞬时返回
+LYRIC_TTL = 7 * 24 * 3600
+LYRIC_CACHE_FILE = BASE / "lyric_cache.json"
+_lyric_lock = threading.Lock()
+_lyric_cache = {}
+_lyric_dirty = False
 
-# HYW音源API配置 (从HYWmusic_beta_公益测试 v0.74.0.js提取)
-HYW_API = "http://103.79.184.97"
-HYW_KEY = "REDACTED-KEY-REMOVED"
+def _lyric_cache_load():
+    global _lyric_cache
+    try:
+        if LYRIC_CACHE_FILE.exists():
+            _lyric_cache = json.loads(LYRIC_CACHE_FILE.read_text('utf-8'))
+            print(f'[LYRIC] 缓存载入 {len(_lyric_cache)} 条')
+    except Exception as e:
+        print(f'[LYRIC] 缓存载入失败 {e}')
+        _lyric_cache = {}
+
+def _lyric_cache_save():
+    """惰性落盘：由后台线程定期调用，避免每个请求都写盘"""
+    global _lyric_dirty
+    with _lyric_lock:
+        if not _lyric_dirty: return
+        try:
+            LYRIC_CACHE_FILE.write_text(json.dumps(_lyric_cache, ensure_ascii=False), 'utf-8')
+            _lyric_dirty = False
+        except Exception as e:
+            print(f'[LYRIC] 缓存落盘失败 {e}')
+
+def _lyric_cache_put(key, data):
+    global _lyric_dirty
+    with _lyric_lock:
+        _lyric_cache[key] = {'ts': time.time(), 'data': data}
+        # 简单容量控制：超过 2000 条清掉最旧的一半
+        if len(_lyric_cache) > 2000:
+            items = sorted(_lyric_cache.items(), key=lambda kv: kv[1].get('ts', 0))
+            for k, _ in items[:1000]:
+                _lyric_cache.pop(k, None)
+        _lyric_dirty = True
+
+
+# HYW 音源 API 地址与密钥定义在文件开头（见 _load_hyw_key）——
+# 密钥不写死在源码里，避免随仓库公开。
 
 socketserver.TCPServer.allow_reuse_address = True
 ctx = ssl.create_default_context()
 ctx.check_hostname = False
 ctx.verify_mode = ssl.CERT_NONE
 
+# 连接类异常：客户端提前断开时 write/send 会抛这些，属正常现象
+CONN_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError,
+               ConnectionRefusedError, TimeoutError)
+
 class H(http.server.SimpleHTTPRequestHandler):
+    # 请求超时：防止半开连接长期占住线程
+    # 注意：保持默认 HTTP/1.0（不启用 keep-alive）——HTTP/1.1 要求每个响应
+    # 都有准确的 Content-Length，代理/流式响应一旦缺失客户端会一直挂着
+    timeout = 60
+
+    def handle_one_request(self):
+        """客户端断开导致的异常不应打断服务，也不该刷 traceback"""
+        try:
+            super().handle_one_request()
+        except CONN_ERRORS:
+            self.close_connection = True
+
+    def handle_error(self, request, client_address):
+        """默认实现会把整个 traceback 打到 stderr；连接类异常静默，其它写日志文件"""
+        import sys, traceback as _tb
+        et, ev, tb = sys.exc_info()
+        if et and issubclass(et, CONN_ERRORS):
+            return
+        try:
+            _log_error(''.join(_tb.format_exception(et, ev, tb)))
+        except Exception:
+            pass
+
     def __init__(self, *a, **kw):
-        super().__init__(*a, directory=str(BASE), **kw)
+        super().__init__(*a, directory=str(RES_DIR), **kw)
+
+    def translate_path(self, path):
+        """静态文件解析：先找打包内资源（player.html 等），
+        找不到再回退到 exe/脚本同级目录（用户自己放的 photos 等）"""
+        p = super().translate_path(path)
+        try:
+            rel = os.path.relpath(p, str(RES_DIR))
+            if not rel.startswith('..'):
+                alt = DATA_DIR / rel
+                if not os.path.exists(p) and alt.exists():
+                    return str(alt)
+        except Exception:
+            pass
+        return p
 
     def do_GET(self):
         p = urllib.parse.urlparse(self.path)
@@ -55,10 +202,11 @@ class H(http.server.SimpleHTTPRequestHandler):
             if path == '/api/photos': return self.j(self._photos())
             if path == '/api/music': return self.j(self._local_music())
             if path == '/api/sources': return self.j(self._sources())
-            if path == '/api/search': return self.j(self._search(Q.get('keyword',''), Q.get('source','kw'), int(Q.get('limit','30'))))
+            if path == '/api/search': return self.j(self._search(Q.get('keyword',''), Q.get('source','kw'), int(Q.get('limit','30')), int(Q.get('page','1'))))
             if path == '/api/url': return self.j(self._get_url(Q))
             if path == '/api/lyric': return self.j(self._get_lyric(Q))
             if path == '/api/pic': return self.j(self._get_pic(Q))
+            if path == '/api/pics': return self.j(self._get_pics_batch(Q.get('ids','')))
             if path == '/api/boards': return self.j(self._boards())
             if path == '/api/board': return self.j(self._board(Q.get('id','93'), int(Q.get('page','1'))))
             if path == '/api/hot': return self.j(self._hot())
@@ -70,29 +218,60 @@ class H(http.server.SimpleHTTPRequestHandler):
             if path == '/api/playlist': return self.j(self._playlist(Q.get('id',''), int(Q.get('page','1'))))
             if path == '/api/proxy': return self._proxy(Q.get('url',''))
         except Exception as e:
+            import traceback as _tb
+            _log_error(f'[api] {path} 失败: {type(e).__name__}: {e}\n{_tb.format_exc()}')
             return self.j({'error': str(e)})
         super().do_GET()
 
     def j(self, data):
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
-        self.send_response(200)
-        self.send_header('Content-type','application/json; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(body)
+        # 客户端提前断开（用户快速切歌/刷新/关页面）时 write 会抛连接类异常。
+        # 这是完全正常的现象，必须吞掉——否则会在日志刷 traceback，
+        # 且 except 里再调 self.j() 会二次抛错直接逃逸出 handler。
+        try:
+            self.send_response(200)
+            self.send_header('Content-type','application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(body)
+        except CONN_ERRORS:
+            pass
 
-    def _get(self, url, headers=None):
+    def _get(self, url, headers=None, timeout=15):
         req = urllib.request.Request(url)
         req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
         if headers:
             for k,v in headers.items(): req.add_header(k, v)
         try:
-            with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
                 return json.loads(r.read().decode('utf-8'))
         except Exception as e:
             print(f"[HTTP] {url} -> {e}")
             return None
+
+    def _text(self, url, headers=None):
+        """取纯文本响应体（酷我封面接口把真实图片 URL 放在 body 里，content-type 是 text/html）"""
+        req = urllib.request.Request(url)
+        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        req.add_header('Referer', 'https://www.kuwo.cn/')
+        if headers:
+            for k,v in headers.items(): req.add_header(k, v)
+        try:
+            with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
+                return r.read().decode('utf-8', 'replace')
+        except Exception as e:
+            print(f"[HTTP] {url} -> {e}")
+            return None
+
+    def end_headers(self):
+        """HTML/JS/CSS 一律禁用缓存：否则浏览器拿旧版页面，用户看到的“功能没实现”其实是缓存"""
+        p = urllib.parse.urlparse(self.path).path.lower()
+        if p.endswith(('.html', '.htm', '.js', '.css')) or p in ('/', ''):
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
+        super().end_headers()
 
     # ====== 照片 ======
     # 优先返回 photos_web/ 下的压缩版（tools/make_photos_web.py 生成，单张 ~20MB -> ~200KB），
@@ -130,10 +309,12 @@ class H(http.server.SimpleHTTPRequestHandler):
                 if f.is_file() and f.suffix=='.js' and f.stat().st_size > 1000]
 
     # ====== 在线搜索 (酷我) ======
-    def _search(self, kw, src='kw', limit=30):
+    def _search(self, kw, src='kw', limit=30, page=1):
         if not kw: return {'songs':[],'total':0}
+        page = max(1, int(page or 1))
         if src == 'kw':
-            url = f'http://search.kuwo.cn/r.s?client=kt&all={urllib.parse.quote(kw)}&pn=0&rn={limit}&uid=794762570&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1&issubtitle=1'
+            pn = page - 1   # 酷我 pn 从 0 开始
+            url = f'http://search.kuwo.cn/r.s?client=kt&all={urllib.parse.quote(kw)}&pn={pn}&rn={limit}&uid=794762570&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1&issubtitle=1'
             d = self._get(url)
             if d and d.get('abslist'):
                 songs = []
@@ -141,17 +322,18 @@ class H(http.server.SimpleHTTPRequestHandler):
                     mid = s.get('MUSICRID','').replace('MUSIC_','')
                     if not mid: continue
                     songs.append({'id':mid,'songmid':mid,'name':s.get('SONGNAME',''),'artist':s.get('ARTIST',''),'album':s.get('ALBUM',''),'duration':int(s.get('DURATION',0)),'source':'kw'})
-                return {'songs':songs,'total':int(d.get('TOTAL',0)),'source':'kw'}
+                return {'songs':songs,'total':int(d.get('TOTAL',0)),'source':'kw','page':page}
         elif src == 'wy':
-            url = f'https://music.163.com/api/search/get/web?s={urllib.parse.quote(kw)}&type=1&offset=0&limit={limit}'
+            offset = (page - 1) * limit
+            url = f'https://music.163.com/api/search/get/web?s={urllib.parse.quote(kw)}&type=1&offset={offset}&limit={limit}'
             d = self._get(url, {'Referer':'https://music.163.com/'})
             if d and d.get('result') and d['result'].get('songs'):
                 songs = [{'id':str(s['id']),'songmid':str(s['id']),'name':s['name'],
                           'artist':'/'.join([a['name'] for a in s.get('artists',[])]),
                           'album':s.get('album',{}).get('name',''),'duration':s.get('duration',0)//1000,'source':'wy'}
                          for s in d['result']['songs']]
-                return {'songs':songs,'total':d['result'].get('songCount',0),'source':'wy'}
-        return {'songs':[],'total':0,'source':src}
+                return {'songs':songs,'total':d['result'].get('songCount',0),'source':'wy','page':page}
+        return {'songs':[],'total':0,'source':src,'page':page}
 
     # ====== HYW音源获取播放URL ======
     def _get_url(self, Q):
@@ -159,9 +341,12 @@ class H(http.server.SimpleHTTPRequestHandler):
         src = Q.get('source','kw')
         name = Q.get('name','')
         artist = Q.get('artist','')
+        quality = Q.get('quality','320k') or '320k'
+        if quality not in ('128k','320k','flac','flac24bit','hires','master'):
+            quality = '320k'
 
         # 方式1: 通过HYW音源API
-        params = {'songId': sid, 'source': src, 'key': HYW_KEY, 'quality': '320k'}
+        params = {'songId': sid, 'source': src, 'key': HYW_KEY, 'quality': quality}
         if name: params['name'] = name
         if artist: params['artist'] = artist
         query = '&'.join(f'{k}={urllib.parse.quote(str(v))}' for k,v in params.items() if v)
@@ -170,9 +355,9 @@ class H(http.server.SimpleHTTPRequestHandler):
         if d and d.get('code') == 200:
             result = d.get('url') or d.get('data') or ''
             if isinstance(result, str) and result.startswith('http'):
-                return {'url': result, 'source': 'hyw'}
+                return {'url': result, 'source': 'hyw', 'quality': d.get('actualQuality', quality)}
             elif isinstance(result, dict) and result.get('url'):
-                return {'url': result['url'], 'source': 'hyw'}
+                return {'url': result['url'], 'source': 'hyw', 'quality': d.get('actualQuality', quality)}
 
         # 方式2: 网易云直链
         if src in ('wy', 'netease'):
@@ -195,35 +380,215 @@ class H(http.server.SimpleHTTPRequestHandler):
         return {'error': '无法获取播放链接'}
 
     # ====== 歌词 ======
+    # ====== 歌词（并行竞速 + 缓存）======
+    def _lyric_kuwo(self, sid):
+        d = self._get(f'http://m.kuwo.cn/newh5/singles/songinfoandlrc?musicId={sid}', timeout=10)
+        if d and d.get('status')==200 and d.get('data') and d['data'].get('lrclist'):
+            lines = []
+            for l in d['data']['lrclist']:
+                t = float(l.get('time',0))
+                txt = l.get('lineLyric','')
+                if txt: lines.append(f'[{int(t//60):02d}:{t%60:05.2f}]{txt}')
+            if lines:
+                return {'lyric':'\n'.join(lines), 'source':'kuwo'}
+        return None
+
+    def _lyric_netease_direct(self, sid):
+        d = self._get(f'https://music.163.com/api/song/lyric?id={sid}&lv=1',
+                      {'Referer':'https://music.163.com/'}, timeout=10)
+        if d and d.get('lrc') and d['lrc'].get('lyric'):
+            return {'lyric': d['lrc']['lyric'], 'source':'netease'}
+        return None
+
+    def _lyric_netease_search(self, name, artist):
+        kw = f'{name} {artist}'.strip()
+        url = f'https://music.163.com/api/search/get/web?s={urllib.parse.quote(kw)}&type=1&offset=0&limit=3'
+        sd = self._get(url, {'Referer':'https://music.163.com/'}, timeout=10)
+        if not (sd and sd.get('result') and sd['result'].get('songs')):
+            return None
+        ids = [s['id'] for s in sd['result']['songs'][:3]]
+        # 3 个候选并行取词，谁先命中用谁的（原来串行最多等 3 次超时）
+        def fetch(nid):
+            ld = self._get(f'https://music.163.com/api/song/lyric?id={nid}&lv=1',
+                           {'Referer':'https://music.163.com/'}, timeout=8)
+            if ld and ld.get('lrc') and ld['lrc'].get('lyric'):
+                return {'lyric': ld['lrc']['lyric'], 'source':'netease-fallback'}
+            return None
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(ids)) as ex:
+                for r in ex.map(fetch, ids):
+                    if r: return r
+        except Exception:
+            pass
+        return None
+
+    def _lyric_hyw(self, src, sid):
+        try:
+            params = {'action':'lyric','source':src,'songId':sid,'key':HYW_KEY}
+            q = '&'.join(f'{k}={urllib.parse.quote(str(v))}' for k,v in params.items())
+            d = self._get(f'{HYW_API}/api/music/info?{q}', timeout=10)
+            if d and d.get('code')==200:
+                data = d.get('data',{})
+                if isinstance(data, dict) and data.get('lyric'):
+                    return {'lyric': data['lyric'], 'source':'hyw'}
+        except Exception as e:
+            print(f'[LYRIC] HYW兜底失败 {e}')
+        return None
+
     def _get_lyric(self, Q):
         sid = Q.get('id','')
         src = Q.get('source','kw')
+        name = Q.get('name','')
+        artist = Q.get('artist','')
+        key = f'{src}_{sid}'
+
+        # 0) 缓存命中（立即返回，不占网络）
+        with _lyric_lock:
+            c = _lyric_cache.get(key)
+            if c and time.time()-c.get('ts',0) < LYRIC_TTL:
+                d = dict(c['data']); d['cached'] = True
+                return d
+
+        # 候选源：(优先级, 名称, 取词函数)  —— 优先级 0 最高
+        cands = []
         if src == 'kw':
-            d = self._get(f'http://m.kuwo.cn/newh5/singles/songinfoandlrc?musicId={sid}')
-            if d and d.get('status')==200 and d.get('data') and d['data'].get('lrclist'):
-                lines = []
-                for l in d['data']['lrclist']:
-                    t = float(l.get('time',0))
-                    txt = l.get('lineLyric','')
-                    if txt: lines.append(f'[{int(t//60):02d}:{t%60:05.2f}]{txt}')
-                return {'lyric':'\n'.join(lines)}
-        if src == 'wy':
-            d = self._get(f'https://music.163.com/api/song/lyric?id={sid}&lv=1', {'Referer':'https://music.163.com/'})
-            if d and d.get('lrc') and d['lrc'].get('lyric'):
-                return {'lyric': d['lrc']['lyric']}
-        return {'lyric':''}
+            cands.append((0, 'kuwo', lambda: self._lyric_kuwo(sid)))
+        elif src == 'wy':
+            cands.append((0, 'netease', lambda: self._lyric_netease_direct(sid)))
+        if name:
+            cands.append((1, 'netease-fallback', lambda: self._lyric_netease_search(name, artist)))
+        cands.append((2, 'hyw', lambda: self._lyric_hyw(src, sid)))
+
+        result = None
+        all_pris = [c[0] for c in cands]
+        GRACE_HIGH_PRI = 3.0   # 秒：为高优先级源保留的首屏等待窗口，超时先用快源
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(cands))
+        t_start = time.time()
+        try:
+            futs = {pool.submit(fn): (pri, nm) for pri, nm, fn in cands}
+            found = {}       # pri -> data（已成功拿到词的源）
+            done_pri = set() # 已结束（无论成功失败）的优先级
+            deadline = t_start + 12
+            pending = set(futs)
+            # ⚠ 用 wait(短超时) 轮询而不是 as_completed：as_completed 会阻塞到"有结果为止"，
+            #   导致宽限期检查点永远不执行（慢源一拖就是十几秒）
+            while pending:
+                done, pending = concurrent.futures.wait(
+                    pending, timeout=0.3, return_when=concurrent.futures.FIRST_COMPLETED)
+                for fut in done:
+                    pri, nm = futs[fut]
+                    done_pri.add(pri)
+                    try:
+                        r = fut.result()
+                    except Exception as e:
+                        print(f'[LYRIC] {nm} 异常 {e}')
+                        r = None
+                    if r and r.get('lyric'):
+                        found[pri] = r
+                if found:
+                    best = min(found)
+                    # 最优已确定（更优优先级都已结束且无词）→ 立即用
+                    if all(p in done_pri for p in all_pris if p < best):
+                        break
+                    # 超过宽限期 → 先用快源出歌词，优质源继续跑完后台更新缓存
+                    if time.time() - t_start > GRACE_HIGH_PRI:
+                        print(f'[LYRIC] 宽限期到，先用 {found[best].get("source")}，等待优质源后台补')
+                        break
+                if time.time() > deadline:
+                    break
+            if found:
+                result = found[min(found)]
+                # 后台补优：若更优优先级仍在跑，完成后写进缓存供下次使用
+                if result is not None:
+                    rp = min(found)
+                    for f, (p, nm) in futs.items():
+                        if p < rp and not f.done():
+                            def _upgrade(fut2, _p=p):
+                                try:
+                                    r2 = fut2.result()
+                                    if r2 and r2.get('lyric'):
+                                        _lyric_cache_put(key, r2)
+                                        print(f'[LYRIC] 后台补到更优歌词 {key} → {r2.get("source")}')
+                                except Exception:
+                                    pass
+                            f.add_done_callback(_upgrade)
+        except concurrent.futures.TimeoutError:
+            print('[LYRIC] 竞速超时，使用已返回的结果')
+            if found: result = found[min(found)]
+        except Exception as e:
+            print(f'[LYRIC] 竞速失败 {e}')
+            # 极端情况回退到串行
+            for pri, nm, fn in cands:
+                try:
+                    r = fn()
+                    if r and r.get('lyric'):
+                        result = r; break
+                except Exception:
+                    pass
+        finally:
+            pool.shutdown(wait=False)
+
+        if result:
+            _lyric_cache_put(key, result)
+        return result or {'lyric':''}
 
     # ====== 封面 ======
     def _get_pic(self, Q):
         sid = Q.get('id','')
         src = Q.get('source','kw')
         if src == 'kw':
-            return {'url': f'http://artistpicserver.kuwo.cn/pic.web?type=rid_pic&pictype=500&size=500&rid={sid}'}
+            # ⚠ artistpicserver 响应是 text/html，body 里才是真正的图片 URL
+            #   （如 http://img1.kwcdn.kuwo.cn/star/albumcover/500/xxx.jpg）
+            #   旧代码把这个接口 URL 直接当 <img src> 返回 → 浏览器按文本解析 → 封面永远不显示
+            u = f'http://artistpicserver.kuwo.cn/pic.web?type=rid_pic&pictype=500&size=500&rid={sid}'
+            real = self._text(u)
+            if real:
+                real = real.strip()
+                if real.startswith('http'):
+                    return {'url': real}
+            return {'url': ''}
         if src == 'wy':
             d = self._get(f'https://music.163.com/api/song/detail?id={sid}&ids=[{sid}]', {'Referer':'https://music.163.com/'})
             if d and d.get('songs') and d['songs'][0].get('album',{}).get('picUrl'):
                 return {'url': d['songs'][0]['album']['picUrl']}
         return {'url': ''}
+
+    # ====== 批量封面（减少请求数）======
+    def _get_pics_batch(self, ids_str):
+        """ids=kw_123,kw_456 → {kw_123: url, ...}  最多50个"""
+        if not ids_str:
+            return {'covers': {}}
+        items = [x.strip() for x in ids_str.split(',') if x.strip()][:50]
+        covers = {}
+        import concurrent.futures
+
+        def fetch_one(key):
+            try:
+                if '_' not in key:
+                    return key, ''
+                src, sid = key.split('_', 1)
+                if src == 'kw':
+                    u = f'http://artistpicserver.kuwo.cn/pic.web?type=rid_pic&pictype=500&size=500&rid={sid}'
+                    real = self._text(u)
+                    if real:
+                        real = real.strip()
+                        if real.startswith('http'):
+                            return key, real
+                elif src == 'wy':
+                    d = self._get(f'https://music.163.com/api/song/detail?id={sid}&ids=[{sid}]', {'Referer':'https://music.163.com/'})
+                    if d and d.get('songs') and d['songs'][0].get('album',{}).get('picUrl'):
+                        return key, d['songs'][0]['album']['picUrl']
+            except Exception:
+                pass
+            return key, ''
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+                for k, v in ex.map(fetch_one, items):
+                    covers[k] = v
+        except Exception as e:
+            print(f'[PICS] 批量失败 {e}')
+        return {'covers': covers}
 
     # ====== 排行榜 ======
     def _boards(self):
@@ -421,41 +786,186 @@ class H(http.server.SimpleHTTPRequestHandler):
         return {'playlists': out, 'total': len(out), 'keyword': kw}
 
     def _health(self):
-        return {'ok': True, 'port': PORT, 'photos': len(self._photos()), 'local_songs': len(self._local_music()),
+        return {'ok': True, 'app': 'baobao-music', 'port': PORT,
+                'photos': len(self._photos()), 'local_songs': len(self._local_music()),
                 'kids_sections': len(_kids_state['data'] or []),
                 'kids_age_s': int(time.time() - _kids_state['ts']) if _kids_state['ts'] else None,
                 'kids_cache_file': KIDS_CACHE_FILE.exists()}
 
     # ====== 音频代理 (解决CORS问题) ======
     def _proxy(self, url):
+        """音频代理：支持 Range 请求（拖动进度条）+ CORS（均衡器用）"""
         if not url or not url.startswith('http'):
             return self.j({'error': 'invalid url'})
         try:
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'Mozilla/5.0')
+            req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            # 透传 Range（seek 必需）
+            rng = self.headers.get('Range')
+            if rng:
+                req.add_header('Range', rng)
             with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
                 content_type = r.headers.get('Content-Type', 'audio/mpeg')
-                data = r.read()
-                self.send_response(200)
+                total = r.headers.get('Content-Length')
+                content_range = r.headers.get('Content-Range')
+                status = r.status
+                # 先读第一块再发响应头：酷我 CDN 偶发返回 206 但 body 为空
+                # （限流/失效链接）。若先把头发出去就只能给客户端一个 0 字节流，
+                # 浏览器会永远停在 readyState=0 —— 必须在这里就判失败，让前端重试换链。
+                first = r.read(65536)
+                if not first:
+                    raise IOError('上游返回空数据（链接失效或被限流）')
+                self.send_response(status if status in (200, 206) else 200)
                 self.send_header('Content-Type', content_type)
-                self.send_header('Content-Length', str(len(data)))
+                if total:
+                    self.send_header('Content-Length', total)
+                if content_range:
+                    self.send_header('Content-Range', content_range)
                 self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Access-Control-Expose-Headers', 'Content-Length,Content-Range,Accept-Ranges')
                 self.send_header('Accept-Ranges', 'bytes')
                 self.end_headers()
-                self.wfile.write(data)
+                # 流式传输（避免大文件占内存）
+                self.wfile.write(first)
+                while True:
+                    chunk = r.read(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except CONN_ERRORS:
+            pass                       # 客户端断开，无需响应
         except Exception as e:
-            self.send_response(502)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+            try:
+                self.send_response(502)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+            except CONN_ERRORS:
+                pass
+
+    def do_HEAD(self):
+        """音频代理的 HEAD 支持（浏览器预检）"""
+        p = urllib.parse.urlparse(self.path)
+        path = urllib.parse.unquote(p.path)
+        if path == '/api/proxy':
+            Q = {k: v[0] for k, v in urllib.parse.parse_qs(p.query).items()}
+            url = Q.get('url','')
+            if url and url.startswith('http'):
+                try:
+                    req = urllib.request.Request(url, method='HEAD')
+                    req.add_header('User-Agent', 'Mozilla/5.0')
+                    with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
+                        self.send_response(200)
+                        self.send_header('Content-Type', r.headers.get('Content-Type','audio/mpeg'))
+                        if r.headers.get('Content-Length'):
+                            self.send_header('Content-Length', r.headers.get('Content-Length'))
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.send_header('Accept-Ranges', 'bytes')
+                        self.end_headers()
+                        return
+                except Exception:
+                    pass
+        super().do_HEAD()
 
     def log_message(self, fmt, *args):
         msg = str(args[0]) if args else ''
         if not any(x in msg for x in ('.css','.woff','.ttf','.ico','.png','.jpg','.gif')):
-            print(f"[MB] {msg}")
+            print(f"[MB] {msg}", flush=True)
+
+    # 未实现的方法（外部扫描器/其它程序误连）直接 405，不要 501 + traceback
+    def do_POST(self):     self._method_not_allowed()
+    def do_PUT(self):      self._method_not_allowed()
+    def do_DELETE(self):   self._method_not_allowed()
+    def do_PATCH(self):    self._method_not_allowed()
+    def do_OPTIONS(self):
+        try:
+            self.send_response(204)
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET,HEAD,OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', '*')
+            self.end_headers()
+        except CONN_ERRORS:
+            pass
+
+    def _method_not_allowed(self):
+        try:
+            self.send_response(405)
+            self.send_header('Allow', 'GET, HEAD, OPTIONS')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+        except CONN_ERRORS:
+            pass
+
+def _lyric_cache_flusher():
+    """后台线程：每 30 秒把歌词缓存落盘一次（惰性写入，避免每个请求都写盘）"""
+    while True:
+        time.sleep(30)
+        try:
+            _lyric_cache_save()
+        except Exception:
+            pass
+
+_srv = None          # 当前 Server 实例（None = 未启动/已关闭）
+
+def _serve_worker():
+    """实际服务循环：跑在独立线程里，任何异常都自愈重试，绝不静默退出"""
+    global _srv
+    while True:
+        try:
+            srv = socketserver.ThreadingTCPServer(("", PORT), H)
+            srv.daemon_threads = True          # 处理线程设为守护，退出时不被卡住
+            _srv = srv
+            print(f"宝宝音乐盒 v3 启动! http://localhost:{PORT}/player.html", flush=True)
+            srv.serve_forever(poll_interval=0.5)
+            return                              # 正常返回 = 被 shutdown，交给主线程决定
+        except Exception as e:
+            print(f'[FATAL] 服务异常: {type(e).__name__}: {e} —— 2 秒后重启', flush=True)
+            if _srv is not None:
+                try: _srv.server_close()
+                except Exception: pass
+                _srv = None
+            time.sleep(2)
+
+def _already_running():
+    """检测是否已有实例在服务（Windows 上 SO_REUSEADDR 允许重复绑定同一端口，
+    两个实例会互相抢请求，行为不可预测 —— 必须在绑定前拦掉）"""
+    try:
+        import urllib.request as _u
+        with _u.urlopen(f"http://127.0.0.1:{PORT}/api/health", timeout=2) as r:
+            d = json.loads(r.read().decode('utf-8'))
+            return bool(d.get('ok')) and d.get('app') == 'baobao-music'
+    except Exception:
+        return False
+
+def serve():
+    """启动服务（阻塞）。源码运行和被 exe 调用都走这里。"""
+    os.chdir(str(BASE))
+    if _already_running():
+        print(f"检测到服务已在运行（端口 {PORT}），本实例退出，直接使用：", flush=True)
+        print(f"  http://localhost:{PORT}/player.html", flush=True)
+        return False
+    if not HYW_KEY:
+        print("[提示] 未配置音源密钥（config.json 里的 hyw_key），在线取播放链接可能失败。", flush=True)
+        print("       在线搜索/榜单仍可用，本地音乐播放不受影响。", flush=True)
+    _lyric_cache_load()
+    threading.Thread(target=_lyric_cache_flusher, daemon=True).start()
+    # 服务线程 + 主线程守护：子线程无论因何退出（异常/端口被占/未知错误），
+    # 主线程都能把它重新拉起，进程永不静默死掉
+    while True:
+        _t = threading.Thread(target=_serve_worker, daemon=False)
+        _t.start()
+        try:
+            _t.join()
+        except KeyboardInterrupt:
+            print('\n[MB] 收到退出信号，关闭服务', flush=True)
+            break
+        print('[WATCHDOG] 服务线程已退出，2 秒后自动重启…', flush=True)
+        time.sleep(2)
+    if _srv is not None:
+        try: _srv.server_close()
+        except Exception: pass
+    return True
 
 if __name__ == '__main__':
-    os.chdir(str(BASE))
-    with socketserver.ThreadingTCPServer(("", PORT), H) as httpd:
-        print(f"宝宝音乐盒 v3 启动! http://localhost:{PORT}/player.html")
-        httpd.serve_forever()
+    serve()

@@ -1,10 +1,54 @@
 # ===== 宝宝音乐盒 =====
-# 仓库只放轻量源码与数据；大目录 / 生成物不入库
-AudioDock/
-lx-music-desktop/
+# 仓库只放轻量源码；个人隐私、第三方凭据、生成物都不入库
+
+# ---- 私有配置与日志（含密钥，绝对不能提交）----
+config.json
+error.log
+*.log
+*.log.old
+*.log.prev*
+*.log.1
+
+# ---- 个人照片（隐私）----
 photos/
-node_modules/
+photos_web/
+!photos/README.md
+
+# ---- 第三方音源文件（含第三方 API 密钥，且非本项目代码）----
+音源/*.js
+音源/*.json
+音源/*.rs
+音源/*.md
+音源/*.html
+音源/*.txt
+!音源/README.md
+
+# ---- 运行时生成的数据 ----
+kids_cache.json
+lyric_cache.json
 __pycache__/
 *.pyc
-*.log
+
+# ---- 打包产物 ----
+build/
+dist/
+*.spec
+app.ico
+
+# ---- 克隆的参考项目 / 依赖 ----
+AudioDock/
+rustmusic-ref/
+lx-music-desktop/
+node_modules/
+
+# ---- 开发过程临时产物与截图 ----
+player_backup_*.html
+prototype.html
+prototype_v2.html
 _verify_*.png
+shot_*.png
+_start.bat
+server.js
+test_lx.js
+gen_html.py
+lx-loader.js
