@@ -212,7 +212,6 @@ HELP_TEXT = f"""{BANNER}
   用法:  宝宝音乐盒.exe [选项]
 
     -p, --port N       指定端口（默认 8082，被占用则往上找）
-    -b, --browser      用默认浏览器打开，不弹原生窗口
     -h, --help         显示本帮助
 
   也可以用环境变量 MB_PORT 指定端口。
@@ -220,7 +219,7 @@ HELP_TEXT = f"""{BANNER}
   数据目录（照片/音源/缓存）就在 exe 旁边：
     photos\\     放你自己的照片
     音源\\       放你自己的音源 .js
-    config.json 音源密钥（可选）
+    config.json 音源密钥（一般不需要）
 """
 
 

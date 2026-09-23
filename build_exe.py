@@ -38,9 +38,15 @@ BUNDLE_DIRS = [
     "photos_web",
     "音源",
 ]
-BUNDLE_OPT = [
-    "config.json",          # 有就打进去（密钥）；没有也能打，只是在线播放要用户自己配
-]
+BUNDLE_OPT = []   # 默认不打包任何配置
+
+# config.json（含音源密钥）默认**不打进包**：
+#   实测 320k 播放不带密钥一样成功（HYW 接口对 320k 不校验 key），
+#   所以公开分发的包里没有任何第三方凭据，功能不受影响。
+#   自己私用想带上：python build_exe.py --with-key
+WITH_KEY = "--with-key" in sys.argv
+if WITH_KEY:
+    BUNDLE_OPT = ["config.json"]
 
 # pywebview 的原生窗口需要这些（不带上就退化成浏览器模式）
 PYWEBVIEW_HIDDEN = [
@@ -116,9 +122,10 @@ def main():
     size_mb = exe.stat().st_size / 1048576
     print(f"\n✅ 打包完成: {exe}")
     print(f"   体积: {size_mb:.1f} MB")
+    print(f"   密钥: {'已打入（私用版）' if WITH_KEY else '未打入（公开分发版，功能不受影响）'}")
     print(f"\n分发方式：把这个 exe 单独发给别人即可（免安装、免 Python）。")
     print(f"双击弹出原生窗口（Edge WebView2 内核），不是浏览器标签页。")
-    print(f"照片、音源、密钥都已打进 exe —— 双击就有轮播和在线播放。")
+    print(f"照片、音源都已打进 exe —— 双击就有轮播和在线播放。")
     return 0
 
 
