@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
     id("com.chaquo.python")
 }
 
@@ -26,6 +27,11 @@ android {
             // 用 debug 签名，方便直接安装（自用分发场景，不上架应用商店）
             signingConfig = signingConfigs.getByName("debug")
         }
+    }
+
+    // AGP 8 起 BuildConfig 默认不生成，但 MainActivity 要用 BuildConfig.VERSION_NAME/DEBUG
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {
