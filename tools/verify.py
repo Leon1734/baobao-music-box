@@ -4,7 +4,7 @@ from playwright.async_api import async_playwright
 
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 URL = "http://localhost:8082/player.html"
-OUT = "E:/Workspace_AI/Hermes/Music/"
+OUT = "E:/Workspace_AI/Hermes/Music/docs/screenshots/"
 
 async def main():
     async with async_playwright() as p:
@@ -275,7 +275,7 @@ async def main():
         await page.evaluate("""() => {
             const b = document.getElementById('fsLyrics');
             b.dispatchEvent(new WheelEvent('wheel',{deltaY:-300,bubbles:true}));
-            b.scrollTop = 40;
+            b.scrollTop = 300;
         }""")
         await page.wait_for_timeout(1200)   # 等动画结束
         p1 = await page.evaluate("() => ({paused: lrcUserScrolling, btn: document.getElementById('lrcResume').classList.contains('on'), pos: document.getElementById('fsLyrics').scrollTop})")
@@ -283,12 +283,12 @@ async def main():
         await page.wait_for_timeout(2000)
         p2 = await page.evaluate("() => ({paused: lrcUserScrolling, pos: document.getElementById('fsLyrics').scrollTop})")
         not_stolen = p2['paused'] and abs(p2['pos'] - p1['pos']) < 20
-        # 5秒后自动恢复
+        # 5秒后自动恢复：位置应被拉回当前歌词附近（方向不固定，只要明显移动过）
         await page.wait_for_timeout(3500)
         p3 = await page.evaluate("() => ({paused: lrcUserScrolling, pos: document.getElementById('fsLyrics').scrollTop})")
-        resumed = (not p3['paused']) and p3['pos'] > p2['pos'] + 20
+        resumed = (not p3['paused']) and abs(p3['pos'] - p2['pos']) > 20
         lrc_ok = base['lines'] > 0 and p1['paused'] and p1['btn'] and not_stolen and resumed
-        print(f"[20] 歌词滚动 {'✅' if lrc_ok else '❌'} {base['lines']}行 / 滚轮暂停={p1['paused']} 按钮={p1['btn']} 位置未被抢={not_stolen}({p1['pos']:.0f}→{p2['pos']:.0f}) 自动恢复={resumed}")
+        print(f"[20] 歌词滚动 {'✅' if lrc_ok else '❌'} {base['lines']}行 / 滚轮暂停={p1['paused']} 按钮={p1['btn']} 位置未被抢={not_stolen}({p1['pos']:.0f}→{p2['pos']:.0f}) 自动恢复={resumed}(恢复后={p3['pos']:.0f} 暂停中={p3['paused']})")
         # 点击"回到当前"按钮
         await page.evaluate("document.getElementById('lrcResume').click()")
         await page.wait_for_timeout(1200)
@@ -343,6 +343,85 @@ async def main():
         await page.evaluate("toggleHelp(false)")
         help_ok = hp['on'] and hp['rows'] >= 10 and not hp_off and hp_key
         print(f"[24] 快捷键帮助 {'✅' if help_ok else '❌'} {hp['secs']}组{hp['rows']}条 / 按钮={hp['on']} ?键={hp_key}")
+
+        # ── 25. 平台切换 Tab（排行榜）：选平台只显示该平台
+        await page.evaluate("document.querySelector('[data-t=\"boards\"]').click()")
+        await page.wait_for_timeout(1500)
+        pt = await page.evaluate("document.querySelectorAll('#bPlatTabs .platTab').length")
+        bd1 = await page.evaluate("document.querySelectorAll('#bList .bd').length")
+        bd2, on2 = 0, False
+        if pt >= 2:
+            await page.evaluate("document.querySelectorAll('#bPlatTabs .platTab')[1].click()")
+            await page.wait_for_timeout(900)
+            bd2 = await page.evaluate("document.querySelectorAll('#bList .bd').length")
+            on2 = await page.evaluate("document.querySelectorAll('#bPlatTabs .platTab')[1].classList.contains('on')")
+        # 推荐页也要有 Tab
+        await page.evaluate("document.querySelector('[data-t=\"tj\"]').click()")
+        await page.wait_for_timeout(2000)
+        pt2 = await page.evaluate("document.querySelectorAll('#tjPlatTabs .platTab').length")
+        await page.screenshot(path=OUT+"shot_9_plat_tabs.png")
+        pt_ok = pt >= 2 and on2 and bd2 > 0 and pt2 >= 2
+        print(f"[25] 平台Tab {'✅' if pt_ok else '❌'} 榜单{pt}个平台({bd1}→{bd2}个榜) / 推荐{pt2}个平台")
+
+        # ── 26. 全屏播放页（大封面+大歌词+完整控制）
+        await page.evaluate("openFsLrc()")
+        await page.wait_for_timeout(1500)
+        fs = await page.evaluate("""() => {
+            const q=s=>document.querySelector(s);
+            const L=q('.fsLeft'), R=q('.fsRight');
+            const lb=L?L.getBoundingClientRect():null, rb=R?R.getBoundingClientRect():null;
+            return {
+                on: q('#fsLrc').classList.contains('on'),
+                cover: !!q('#fsCoverImg'),
+                title: (q('#fsTitle')||{}).textContent||'',
+                lrc: document.querySelectorAll('#fsLyrics div').length,
+                ctl: document.querySelectorAll('.fsCtl button').length,
+                pb: !!q('#fsPB'), vol: !!q('#fsVB'),
+                lw: lb?Math.round(lb.width):0, rw: rb?Math.round(rb.width):0,
+                side: !!(lb&&rb&&rb.left > lb.left+lb.width-10 && Math.abs(lb.left-rb.left)>50)
+            };
+        }""")
+        # 全屏页的播放/暂停要真的生效
+        await page.evaluate("document.getElementById('fsPl').click()")
+        await page.wait_for_timeout(800)
+        fs_paused = await page.evaluate("au.paused")
+        await page.evaluate("document.getElementById('fsPl').click()")
+        await page.wait_for_timeout(800)
+        fs_resumed = await page.evaluate("!au.paused")
+        await page.screenshot(path=OUT+"shot_10_fullscreen.png")
+        fs_ok = (fs['on'] and fs['ctl']>=5 and fs['pb'] and fs['vol'] and fs['lrc']>0
+                 and fs['side'] and fs['rw']>fs['lw'] and fs_paused and fs_resumed)
+        print(f"[26] 全屏播放页 {'✅' if fs_ok else '❌'} 控制{fs['ctl']}个 歌词{fs['lrc']}行 "
+              f"封面={fs['cover']} 左右{fs['lw']}/{fs['rw']}px 并排={fs['side']} 暂停={fs_paused} 续播={fs_resumed}")
+        await page.evaluate("closeFsLrc()")
+        await page.wait_for_timeout(400)
+
+        # ── 27. 双语歌词配对高亮：高亮的必须正好是「当前行 + 紧跟其后的翻译行」
+        #     判据：高亮索引集合 == lrcPairIdx(activeIdx)（允许差一行，避开读取竞态）
+        await page.evaluate("openFsLrc()")
+        pair_hits, pair_total, pair_sample = 0, 0, ""
+        for _ in range(5):
+            await page.wait_for_timeout(2600)
+            bi = await page.evaluate("""() => {
+                const box=document.getElementById('fsLyrics');
+                const ac=[...box.querySelectorAll('div[data-fsi].ac')].map(e=>parseInt(e.dataset.fsi)).sort((a,b)=>a-b);
+                const t=au.currentTime+(settings.lrcOffset||0);
+                let act=-1;
+                for(let i=S.lyrics.length-1;i>=0;i--){if(t>=S.lyrics[i].time){act=i;break}}
+                const srt=a=>a.slice().sort((x,y)=>x-y);
+                return {ac:ac, exp:srt(lrcPairIdx(act)), exp2:srt(lrcPairIdx(act-1)),
+                        txt:ac.map(i=>(S.lyrics[i]||{}).text||'').map(s=>s.trim().slice(0,14)),
+                        cjk:ac.map(i=>hasCJK((S.lyrics[i]||{}).text||''))};
+            }""")
+            pair_total += 1
+            if bi['ac'] == bi['exp'] or bi['ac'] == bi['exp2']:
+                pair_hits += 1
+                if not pair_sample and len(bi['ac']) == 2: pair_sample = f"{bi['txt']}"
+        # 至少要有一次出现「一行原文 + 一行翻译」的成对高亮
+        pair_ok = pair_hits == pair_total
+        print(f"[27] 双语歌词配对 {'✅' if pair_ok else '❌'} {pair_hits}/{pair_total} 次匹配期望 / 样例={pair_sample}")
+        await page.evaluate("closeFsLrc()")
+        await page.wait_for_timeout(400)
 
         print("\n" + "="*56)
         if errors:

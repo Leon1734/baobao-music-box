@@ -66,3 +66,6 @@ android/gradlew.bat
 # 注意：只忽略同步产物，Kotlin/Gradle 源码要入库
 android/app/src/main/assets/
 android/app/src/main/python/
+
+# screenshots are dev artifacts (18MB) - kept locally, not committed
+docs/screenshots/

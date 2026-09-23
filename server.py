@@ -2,7 +2,7 @@
 宝宝音乐盒 v3 - 完整版
 HYW音源API直接调用 + 酷我API + 本地文件
 """
-import http.server, socketserver, os, json, sys, urllib.parse, urllib.request, ssl, threading, time, concurrent.futures
+import http.server, socketserver, os, json, sys, urllib.parse, urllib.request, urllib.error, ssl, threading, time, concurrent.futures
 from pathlib import Path
 
 PORT = int(os.environ.get('MB_PORT', 8082))   # 可用环境变量换端口，避免多实例端口冲突
@@ -82,6 +82,18 @@ def _load_hyw_key():
     return _DEFAULT_HYW_KEY
 
 HYW_KEY = _load_hyw_key()
+
+# 搜索时记下的「平台补充信息」（酷狗各音质对应不同 hash 等），取链接时用。
+# 搜完马上就播，所以这个缓存一定命中；限长避免无限增长。
+_SONG_EXTRA = {}
+_SONG_EXTRA_MAX = 4000
+
+
+def _song_extra_put(key, val):
+    if len(_SONG_EXTRA) >= _SONG_EXTRA_MAX:
+        for k in list(_SONG_EXTRA.keys())[:_SONG_EXTRA_MAX // 4]:
+            _SONG_EXTRA.pop(k, None)
+    _SONG_EXTRA[key] = val
 
 
 def _seed_kids_cache():
@@ -241,21 +253,21 @@ class H(http.server.SimpleHTTPRequestHandler):
         try:
             if path == '/api/photos': return self.j(self._photos())
             if path == '/api/music': return self.j(self._local_music())
-            if path == '/api/sources': return self.j(self._sources())
-            if path == '/api/search': return self.j(self._search(Q.get('keyword',''), Q.get('source','kw'), int(Q.get('limit','30')), int(Q.get('page','1'))))
+            if path == '/api/search': return self.j(self._search(Q.get('keyword',''), Q.get('source','all'), int(Q.get('limit','30')), int(Q.get('page','1'))))
             if path == '/api/url': return self.j(self._get_url(Q))
             if path == '/api/lyric': return self.j(self._get_lyric(Q))
             if path == '/api/pic': return self.j(self._get_pic(Q))
             if path == '/api/pics': return self.j(self._get_pics_batch(Q.get('ids','')))
-            if path == '/api/boards': return self.j(self._boards())
-            if path == '/api/board': return self.j(self._board(Q.get('id','93'), int(Q.get('page','1'))))
+            if path == '/api/boards': return self.j(self._boards(Q.get('source','all')))
+            if path == '/api/board': return self.j(self._board(Q.get('id','93'), int(Q.get('page','1')), Q.get('source','kw')))
             if path == '/api/hot': return self.j(self._hot())
-            if path == '/api/tj': return self.j(self._tj())
+            if path == '/api/tj': return self.j(self._tj(Q.get('source','kw')))
             if path == '/api/kids': return self.j(self._kids(Q.get('refresh') == '1'))
             if path == '/api/kids/catalog': return self.j(self._kids_catalog())
-            if path == '/api/playlists': return self.j(self._playlists(Q.get('kw', '儿歌'), int(Q.get('limit', '20'))))
+            if path == '/api/playlists': return self.j(self._playlists(Q.get('kw', '儿歌'), int(Q.get('limit', '20')), Q.get('source','all')))
             if path == '/api/health': return self.j(self._health())
-            if path == '/api/playlist': return self.j(self._playlist(Q.get('id',''), int(Q.get('page','1'))))
+            if path == '/api/playlist': return self.j(self._playlist(Q.get('id',''), int(Q.get('page','1')), Q.get('source','kw')))
+            if path == '/api/sources': return self.j({'files': self._sources(), 'platforms': self.SRC_META})
             if path == '/api/proxy': return self._proxy(Q.get('url',''))
         except Exception as e:
             import traceback as _tb
@@ -278,17 +290,42 @@ class H(http.server.SimpleHTTPRequestHandler):
         except CONN_ERRORS:
             pass
 
-    def _get(self, url, headers=None, timeout=15):
-        req = urllib.request.Request(url)
-        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-        if headers:
-            for k,v in headers.items(): req.add_header(k, v)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
-                return json.loads(r.read().decode('utf-8'))
-        except Exception as e:
-            print(f"[HTTP] {url} -> {e}")
-            return None
+    def _get(self, url, headers=None, timeout=15, retries=2):
+        """GET 取 JSON。带重试 —— 本机 DNS/网络会瞬时抖动
+        （实测并发请求时出现过 getaddrinfo failed / 超时，但同一地址单独请求就正常），
+        不重试的话一次抖动就会让整个平台的结果变空。"""
+        import time as _t
+        last = None
+        for attempt in range(retries + 1):
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            if headers:
+                for k,v in headers.items(): req.add_header(k, v)
+            try:
+                with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                    raw = r.read()
+                # ⚠ 国内接口的编码坑，两种都实测踩过：
+                #   1) QQ 歌单搜索：声明 utf-8，但服务端把 4 字节 emoji 截断成字面量 ".."
+                #      （留下孤立首字节 \xe6），整篇 utf-8 strict 解不开。
+                #      这种「零星坏字」不能退化成 gbk —— 那会把所有正常中文变乱码。
+                #   2) 个别接口真的返回 GBK。
+                # 判据：按 utf-8 容错解，坏字极少 → 就是 utf-8；坏字很多 → 才认为是 GBK。
+                try:
+                    text = raw.decode('utf-8')
+                except UnicodeDecodeError:
+                    t_utf = raw.decode('utf-8', 'replace')
+                    bad = t_utf.count('\ufffd')
+                    text = t_utf if bad <= max(3, len(raw) // 200) else raw.decode('gbk', 'replace')
+                return json.loads(text)
+            except Exception as e:
+                last = e
+                # 只对网络类错误重试；HTTP 4xx/5xx（服务端明确拒绝）没必要重试
+                if isinstance(e, urllib.error.HTTPError):
+                    break
+                if attempt < retries:
+                    _t.sleep(0.5 * (attempt + 1))
+        print(f"[HTTP] {url} -> {last}")
+        return None
 
     def _text(self, url, headers=None):
         """取纯文本响应体（酷我封面接口把真实图片 URL 放在 body 里，content-type 是 text/html）"""
@@ -375,90 +412,242 @@ class H(http.server.SimpleHTTPRequestHandler):
         return out
 
     # ====== 在线搜索 (酷我) ======
+    # ====== 多平台搜索 ======
+    # 各平台 id 语义不同，但 HYW 取链接接口统一认 songId：
+    #   kw → musicId      wy → 歌曲id      tx → songmid      kg → FileHash
+    # 所以搜索时把「平台原生 id」直接当 songId 存下来，取链接时原样传回即可。
+    # kg 的音质对应不同 hash（FileHash=128k / HQFileHash=320k / SQFileHash=flac），
+    # 搜索时把三个 hash 一起记进 _SONG_EXTRA，取链接时按音质挑。
+    SRC_META = [
+        {'key':'kw', 'name':'酷我',   'icon':'🎵'},
+        {'key':'wy', 'name':'网易云', 'icon':'☁️'},
+        {'key':'tx', 'name':'QQ音乐', 'icon':'🐧'},
+        {'key':'kg', 'name':'酷狗',   'icon':'🐶'},
+    ]
+
+    def _search_one(self, src, kw, limit, page):
+        """单平台搜索 → 统一字段的歌曲列表。失败返回 []（不抛异常，交给调用方兜底）"""
+        try:
+            if src == 'kw':
+                pn = page - 1   # 酷我 pn 从 0 开始
+                url = (f'http://search.kuwo.cn/r.s?client=kt&all={urllib.parse.quote(kw)}&pn={pn}'
+                       f'&rn={limit}&uid=794762570&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1'
+                       f'&newver=1&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1&issubtitle=1')
+                d = self._get(url, timeout=8, retries=1)
+                out = []
+                for s in (d or {}).get('abslist') or []:
+                    mid = str(s.get('MUSICRID','')).replace('MUSIC_','')
+                    if not mid: continue
+                    out.append({'id':mid,'songmid':mid,'name':s.get('SONGNAME',''),'artist':s.get('ARTIST',''),
+                                'album':s.get('ALBUM',''),'duration':int(s.get('DURATION',0) or 0),'source':'kw'})
+                return out
+
+            if src == 'wy':
+                offset = (page - 1) * limit
+                url = f'https://music.163.com/api/search/get/web?s={urllib.parse.quote(kw)}&type=1&offset={offset}&limit={limit}'
+                d = self._get(url, {'Referer':'https://music.163.com/'}, timeout=8, retries=1)
+                out = []
+                for s in (((d or {}).get('result') or {}).get('songs') or []):
+                    sid = str(s.get('id') or '')
+                    if not sid: continue
+                    out.append({'id':sid,'songmid':sid,'name':s.get('name',''),
+                                'artist':'/'.join(a.get('name','') for a in s.get('artists',[])),
+                                'album':(s.get('album') or {}).get('name',''),
+                                'duration':int(s.get('duration',0) or 0)//1000,'source':'wy'})
+                return out
+
+            if src == 'tx':
+                # QQ：songmid 才是播放用的 ID（songid 数字 ID 传给音源会 500）
+                # ⚠ 不要加 new_json=1：它会换掉整套字段名（songname→title、albumname→album.name、
+                #   songmid→mid），加了就得改解析。用默认的旧格式最省事。
+                url = (f'https://c.y.qq.com/soso/fcgi-bin/client_search_cp?p={page}&n={limit}'
+                       f'&w={urllib.parse.quote(kw)}&format=json')
+                d = self._get(url, {'Referer':'https://y.qq.com/'}, timeout=8, retries=1)
+                lst = ((((d or {}).get('data') or {}).get('song') or {}).get('list')) or []
+                out = []
+                for s in lst:
+                    mid = s.get('songmid') or ''
+                    if not mid: continue
+                    out.append({'id':mid,'songmid':mid,'name':s.get('songname',''),
+                                'artist':'/'.join(a.get('name','') for a in s.get('singer',[])),
+                                'album':s.get('albumname',''),'duration':int(s.get('interval',0) or 0),'source':'tx'})
+                return out
+
+            if src == 'kg':
+                url = (f'https://songsearch.kugou.com/song_search_v2?keyword={urllib.parse.quote(kw)}'
+                       f'&page={page}&pagesize={limit}&platform=WebFilter&userid=0&clientver=2000'
+                       f'&iscorrection=1&privilege_filter=0')
+                d = self._get(url, timeout=8, retries=1)
+                lst = (((d or {}).get('data') or {}).get('lists')) or []
+                out = []
+                for s in lst:
+                    h = s.get('FileHash') or ''
+                    if not h: continue
+                    sid = str(s.get('MixSongID') or s.get('ID') or h)
+                    # 记下各音质对应的 hash，取链接时按 quality 挑
+                    ex = {'h128': h, 'h320': s.get('HQFileHash') or '', 'hflac': s.get('SQFileHash') or ''}
+                    _song_extra_put(('kg', sid), ex)
+                    _song_extra_put(('kg', h), ex)
+                    out.append({'id':sid,'songmid':sid,'name':s.get('SongName',''),
+                                'artist':s.get('SingerName',''),'album':s.get('AlbumName',''),
+                                'duration':int(s.get('Duration',0) or 0),'source':'kg'})
+                return out
+        except Exception as e:
+            print(f'[SEARCH] {src} 失败: {type(e).__name__}: {e}')
+        return []
+
     def _search(self, kw, src='kw', limit=30, page=1):
+        """搜索。src='all' 时并行查所有平台，按轮转交错合并（让各平台结果都能露面）"""
         if not kw: return {'songs':[],'total':0}
         page = max(1, int(page or 1))
-        if src == 'kw':
-            pn = page - 1   # 酷我 pn 从 0 开始
-            url = f'http://search.kuwo.cn/r.s?client=kt&all={urllib.parse.quote(kw)}&pn={pn}&rn={limit}&uid=794762570&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1&issubtitle=1'
-            d = self._get(url)
-            if d and d.get('abslist'):
-                songs = []
-                for s in d['abslist']:
-                    mid = s.get('MUSICRID','').replace('MUSIC_','')
-                    if not mid: continue
-                    songs.append({'id':mid,'songmid':mid,'name':s.get('SONGNAME',''),'artist':s.get('ARTIST',''),'album':s.get('ALBUM',''),'duration':int(s.get('DURATION',0)),'source':'kw'})
-                return {'songs':songs,'total':int(d.get('TOTAL',0)),'source':'kw','page':page}
-        elif src == 'wy':
-            offset = (page - 1) * limit
-            url = f'https://music.163.com/api/search/get/web?s={urllib.parse.quote(kw)}&type=1&offset={offset}&limit={limit}'
-            d = self._get(url, {'Referer':'https://music.163.com/'})
-            if d and d.get('result') and d['result'].get('songs'):
-                songs = [{'id':str(s['id']),'songmid':str(s['id']),'name':s['name'],
-                          'artist':'/'.join([a['name'] for a in s.get('artists',[])]),
-                          'album':s.get('album',{}).get('name',''),'duration':s.get('duration',0)//1000,'source':'wy'}
-                         for s in d['result']['songs']]
-                return {'songs':songs,'total':d['result'].get('songCount',0),'source':'wy','page':page}
-        return {'songs':[],'total':0,'source':src,'page':page}
+        limit = max(1, min(int(limit or 30), 100))
+
+        if src not in ('all', 'all_flat'):
+            songs = self._search_one(src, kw, limit, page)
+            # has_more：单平台按「是否取满一页」判断
+            return {'songs': songs, 'total': len(songs), 'source': src, 'page': page,
+                    'has_more': len(songs) >= limit}
+
+        # 并行搜全部平台
+        keys = [m['key'] for m in self.SRC_META]
+        per = max(6, min(limit, 20))          # 每平台取多少（太多会拖慢）
+        results = {}
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=len(keys)) as ex:
+                futs = {ex.submit(self._search_one, k, kw, per, page): k for k in keys}
+                for f in as_completed(futs, timeout=18):
+                    k = futs[f]
+                    try: results[k] = f.result() or []
+                    except Exception: results[k] = []
+        except Exception as e:
+            print(f'[SEARCH] all 并行失败: {e}')
+            for k in keys:
+                if k not in results:
+                    try: results[k] = self._search_one(k, kw, per, page) or []
+                    except Exception: results[k] = []
+
+        # 轮转交错：A1 B1 C1 D1 A2 B2 ... —— 各平台并列展示，而不是某平台霸屏
+        merged, seen = [], set()
+        for i in range(per):
+            for k in keys:
+                lst = results.get(k) or []
+                if i < len(lst):
+                    s = lst[i]
+                    sig = (s['name'], s['artist'])
+                    if sig in seen: continue      # 跨平台同名同歌手去重
+                    seen.add(sig)
+                    merged.append(s)
+                    if len(merged) >= limit: break
+            if len(merged) >= limit: break
+
+        counts = {k: len(results.get(k) or []) for k in keys}
+        # all 模式下 total 只是「本页合并了多少首」，不能当总数用（各平台真实总数不可知）。
+        # 翻页改看 has_more：任一平台取满了一页就说明后面还有。
+        has_more = any(len(results.get(k) or []) >= per for k in keys)
+        return {'songs': merged, 'total': len(merged), 'source': 'all', 'page': page,
+                'counts': counts, 'has_more': has_more, 'per_source': per}
 
     # ====== HYW音源获取播放URL ======
+    def _hyw_url(self, src, sid, name, artist, quality, timeout=8, extra=None):
+        """调 HYW 接口取链接。成功返回 {url,source,quality}，失败返回 None"""
+        params = {'songId': sid, 'source': src, 'key': HYW_KEY, 'quality': quality}
+        if name: params['name'] = name
+        if artist: params['artist'] = artist
+        # 酷狗：按音质挑对应的 hash（接口按 hash 区分码率）
+        if src == 'kg' and extra:
+            h = extra.get('h320') if quality in ('320k','flac','flac24bit','hires','master') else extra.get('h128')
+            if quality in ('flac','flac24bit','hires','master') and extra.get('hflac'):
+                h = extra['hflac']
+            if h: params['songId'] = h; params['hash'] = h
+        query = '&'.join(f'{k}={urllib.parse.quote(str(v))}' for k,v in params.items() if v)
+        d = self._get(f'{HYW_API}/api/music/url?{query}', timeout=timeout)
+        if d and d.get('code') == 200:
+            result = d.get('url') or d.get('data') or ''
+            if isinstance(result, str) and result.startswith('http'):
+                return {'url': result, 'source': src, 'via': 'hyw', 'quality': d.get('actualQuality', quality)}
+            if isinstance(result, dict) and result.get('url'):
+                return {'url': result['url'], 'source': src, 'via': 'hyw', 'quality': d.get('actualQuality', quality)}
+        return None
+
+    def _direct_url(self, src, sid, timeout=10):
+        """不经音源、直连平台的兜底链接"""
+        try:
+            if src == 'kw':
+                u = f'http://antiserver.kuwo.cn/anti.s?type=convert_url&rid={sid}&format=mp3&response=url'
+                req = urllib.request.Request(u)
+                req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+                with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                    txt = r.read().decode('utf-8','replace').strip()
+                if txt.startswith('http'): return {'url': txt, 'source': 'kw', 'via': 'direct'}
+            elif src in ('wy','netease'):
+                return {'url': f'https://music.163.com/song/media/outer/url?id={sid}.mp3', 'source':'wy','via':'direct'}
+        except Exception as e:
+            print(f'[URL] {src} 直链兜底失败: {e}')
+        return None
+
+    def _cross_source(self, name, artist, quality, exclude, timeout=14):
+        """本平台放不了时，拿「歌名+歌手」去其它平台找同款。
+        这是「经常听到某首歌暂时无法听」的解法 —— 换源而不是放弃。"""
+        if not name: return None
+        q = (name + ' ' + (artist or '')).strip()
+        keys = [m['key'] for m in self.SRC_META if m['key'] != exclude]
+        cands = []
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=len(keys)) as ex:
+                futs = {ex.submit(self._search_one, k, q, 5, 1): k for k in keys}
+                for f in as_completed(futs, timeout=timeout):
+                    k = futs[f]
+                    try: cands.extend((f.result() or [])[:4])
+                    except Exception: pass
+        except Exception as e:
+            print(f'[CROSS] 搜索失败: {e}')
+        if not cands:
+            return None
+        # 先按歌名相似度排（同名优先），逐个试链接
+        base = (name or '').strip().lower().replace(' ', '')
+        cands.sort(key=lambda s: 0 if base and base in (s.get('name','').strip().lower().replace(' ','')) else 1)
+        for s in cands[:6]:
+            got = self._hyw_url(s['source'], s['id'], s.get('name',''), s.get('artist',''), quality,
+                                timeout=7, extra=_SONG_EXTRA.get((s['source'], s['id'])))
+            if got:
+                got['via'] = 'cross'
+                got['from'] = s.get('name','') + (' - ' + s.get('artist','') if s.get('artist') else '')
+                return got
+        return None
+
     def _get_url(self, Q):
         sid = Q.get('id','')
         src = Q.get('source','kw')
         name = Q.get('name','')
         artist = Q.get('artist','')
         quality = Q.get('quality','320k') or '320k'
-        if quality not in ('128k','320k','flac','flac24bit','hires','master'):
+        if quality not in ('128k','320k','flac','flac24bit','hires','master','atmos','atmos_plus'):
             quality = '320k'
+        if src in ('netease',): src = 'wy'
+        extra = _SONG_EXTRA.get((src, sid))
 
-        # 方式1: 通过HYW音源API
-        # HYW 服务器时快时慢（实测 0.3s ~ 12s），所以：
-        #   短超时先试一次 → 慢/失败就立刻走下面的酷我直链兜底（通常 <1s）
-        #   → 兜底也不行再回来用长超时重试一次 HYW
-        params = {'songId': sid, 'source': src, 'key': HYW_KEY, 'quality': quality}
-        if name: params['name'] = name
-        if artist: params['artist'] = artist
-        query = '&'.join(f'{k}={urllib.parse.quote(str(v))}' for k,v in params.items() if v)
-        url = f'{HYW_API}/api/music/url?{query}'
+        # 1) 原平台，短超时先试（HYW 时快时慢：0.3s ~ 12s）
+        got = self._hyw_url(src, sid, name, artist, quality, timeout=8, extra=extra)
+        if got: return got
 
-        def _hyw(timeout):
-            d = self._get(url, timeout=timeout)
-            if d and d.get('code') == 200:
-                result = d.get('url') or d.get('data') or ''
-                if isinstance(result, str) and result.startswith('http'):
-                    return {'url': result, 'source': 'hyw', 'quality': d.get('actualQuality', quality)}
-                if isinstance(result, dict) and result.get('url'):
-                    return {'url': result['url'], 'source': 'hyw', 'quality': d.get('actualQuality', quality)}
-            return None
+        # 2) 换平台找同款 —— 用户说的「暂时无法听」，多数能在这里救回来。
+        #    ⚠ 必须排在直链兜底前面：酷我 antiserver 对任何 rid 都返回一个能播的链接
+        #    （实测垃圾 ID 也返回音频，但那是**另一首歌**），先走直链会把「播不了」
+        #    悄悄变成「放错歌」。跨源结果是按歌名+歌手搜出来的，才是可信的。
+        got = self._cross_source(name, artist, quality, exclude=src)
+        if got: return got
 
-        fast = _hyw(8)
-        if fast:
-            return fast
+        # 3) 原平台直链兜底（酷我 / 网易云有公开直链）—— 放在跨源之后
+        got = self._direct_url(src, sid)
+        if got: return got
 
-        # 方式2: 网易云直链
-        if src in ('wy', 'netease'):
-            return {'url': f'https://music.163.com/song/media/outer/url?id={sid}.mp3', 'source': 'netease'}
+        # 4) 最后再用长超时回原平台试一次（上面只是没等到，不代表真挂了）
+        got = self._hyw_url(src, sid, name, artist, quality, timeout=20, extra=extra)
+        if got: return got
 
-        # 方式3: 酷我直链兜底
-        # ⚠ convert_url3 返回的是 JSON 文本，直接塞给 audio.src 会播放失败；convert_url 返回纯 URL
-        if src == 'kw':
-            try:
-                u = f'http://antiserver.kuwo.cn/anti.s?type=convert_url&rid={sid}&format=mp3&response=url'
-                req = urllib.request.Request(u)
-                req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-                with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
-                    txt = r.read().decode('utf-8', 'replace').strip()
-                if txt.startswith('http'):
-                    return {'url': txt, 'source': 'kw-direct'}
-            except Exception as e:
-                print(f'[URL] 酷我直链兜底失败: {e}')
-
-        # 方式4: HYW 长超时再试一次（上面只是短超时没等到，不代表它真挂了）
-        slow = _hyw(20)
-        if slow:
-            return slow
-
-        return {'error': '无法获取播放链接'}
+        return {'error': '无法获取播放链接', 'tried': ['hyw:'+src, 'cross-source', 'direct:'+src, 'hyw-retry']}
 
     # ====== 歌词 ======
     # ====== 歌词（并行竞速 + 缓存）======
@@ -672,30 +861,161 @@ class H(http.server.SimpleHTTPRequestHandler):
         return {'covers': covers}
 
     # ====== 排行榜 ======
-    def _boards(self):
-        return {'boards':[
-            {'id':'93','name':'飙升榜','icon':'🔥'},{'id':'17','name':'新歌榜','icon':'🆕'},
-            {'id':'16','name':'热歌榜','icon':'🎵'},{'id':'158','name':'抖音热歌榜','icon':'📱'},
-            {'id':'284','name':'热评榜','icon':'💬'},{'id':'290','name':'ACG新歌榜','icon':'🎌'},
-            {'id':'278','name':'古风音乐榜','icon':'🏮'},{'id':'242','name':'电音榜','icon':'🎧'},
-            {'id':'187','name':'流行趋势榜','icon':'📈'},{'id':'186','name':'ACG神曲榜','icon':'🎮'},
-            {'id':'26','name':'经典怀旧榜','icon':'📻'},{'id':'104','name':'华语榜','icon':'🇨🇳'},
-            {'id':'64','name':'影视金曲榜','icon':'🎬'},{'id':'176','name':'DJ嗨歌榜','icon':'💃'},
-            {'id':'12','name':'Billboard榜','icon':'🇺🇸'},{'id':'49','name':'iTunes榜','icon':'🍎'},
-            {'id':'246','name':'YouTube榜','icon':'▶️'},{'id':'15','name':'日本公信榜','icon':'🇯🇵'},
-        ]}
+    # ====== 排行榜（分平台）======
+    KW_BOARDS = [
+        {'id':'93','name':'飙升榜','icon':'🔥'},{'id':'17','name':'新歌榜','icon':'🆕'},
+        {'id':'16','name':'热歌榜','icon':'🎵'},{'id':'158','name':'抖音热歌榜','icon':'📱'},
+        {'id':'284','name':'热评榜','icon':'💬'},{'id':'290','name':'ACG新歌榜','icon':'🎌'},
+        {'id':'278','name':'古风音乐榜','icon':'🏮'},{'id':'242','name':'电音榜','icon':'🎧'},
+        {'id':'187','name':'流行趋势榜','icon':'📈'},{'id':'186','name':'ACG神曲榜','icon':'🎮'},
+        {'id':'26','name':'经典怀旧榜','icon':'📻'},{'id':'104','name':'华语榜','icon':'🇨🇳'},
+        {'id':'64','name':'影视金曲榜','icon':'🎬'},{'id':'176','name':'DJ嗨歌榜','icon':'💃'},
+        {'id':'12','name':'Billboard榜','icon':'🇺🇸'},{'id':'49','name':'iTunes榜','icon':'🍎'},
+        {'id':'246','name':'YouTube榜','icon':'▶️'},{'id':'15','name':'日本公信榜','icon':'🇯🇵'},
+    ]
+    # 网易云榜单接口偶发不稳，留一份固定榜单兜底（id 是官方榜单 ID）
+    WY_BOARDS_FALLBACK = [
+        {'id':'3778678','name':'热歌榜'},{'id':'19723756','name':'飙升榜'},
+        {'id':'3779629','name':'新歌榜'},{'id':'2884035','name':'原创榜'},
+        {'id':'3778678','name':'黑胶VIP热歌榜'},{'id':'71384707','name':'古风榜'},
+        {'id':'71385702','name':'国风榜'},{'id':'1978921795','name':'电音榜'},
+    ]
 
-    def _board(self, bid, page=1):
-        url = f'http://kbangserver.kuwo.cn/ksong.s?from=pc&fmt=json&pn={page-1}&rn=30&type=bang&data=content&id={bid}&show_copyright_off=0&pcmp4=1&isbang=1'
-        d = self._get(url)
-        if d and d.get('musiclist'):
+    def _boards_kw(self):
+        return [dict(b, cover='', count=0) for b in self.KW_BOARDS]
+
+    def _boards_wy(self):
+        d = self._get('https://music.163.com/api/toplist', {'Referer':'https://music.163.com/'})
+        out = []
+        for b in ((d or {}).get('list') or []):
+            if not b.get('id'): continue
+            out.append({'id':str(b['id']), 'name':b.get('name',''), 'cover':b.get('coverImgUrl',''),
+                        'count':b.get('trackCount',0), 'note':b.get('updateFrequency','')})
+        if not out:
+            out = [dict(b, cover='', count=0, note='') for b in self.WY_BOARDS_FALLBACK]
+        return out
+
+    def _boards_tx(self):
+        import json as _json
+        data = {'comm':{'ct':24}, 'topList':{'module':'musicToplist.ToplistInfoServer','method':'GetAll','param':{}}}
+        url = 'https://u.y.qq.com/cgi-bin/musicu.fcg?data=' + urllib.parse.quote(_json.dumps(data,separators=(',',':')))
+        d = self._get(url, {'Referer':'https://y.qq.com/'})
+        tl = ((d or {}).get('topList') or {}).get('data') or {}
+        out = []
+        for g in (tl.get('group') or []):
+            for b in (g.get('toplist') or []):
+                tid = b.get('topId')
+                if not tid: continue
+                out.append({'id':str(tid), 'name':b.get('title',''), 'cover':'', 'count':b.get('totalNum',0),
+                            'note':g.get('groupName',''), 'listen':b.get('listenNum',0)})
+        return out
+
+    def _boards_kg(self):
+        d = self._get('http://mobilecdn.kugou.com/api/v3/rank/list?plat=2&page=1&pagesize=30&withsong=0')
+        out = []
+        for b in (((d or {}).get('data') or {}).get('info') or []):
+            rid = b.get('rankid')
+            if not rid: continue
+            out.append({'id':str(rid), 'name':b.get('rankname',''),
+                        'cover':(b.get('imgurl') or '').replace('{size}','240'), 'count':0,
+                        'note':b.get('update_frequency','')})
+        return out
+
+    def _boards(self, src='all'):
+        """各平台榜单。src='all' 返回全部分组，方便前端做平台切换"""
+        fn = {'kw':self._boards_kw, 'wy':self._boards_wy, 'tx':self._boards_tx, 'kg':self._boards_kg}
+        keys = [m['key'] for m in self.SRC_META] if src in ('all','') else [src]
+        res = {}
+        if len(keys) > 1:
+            try:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                with ThreadPoolExecutor(max_workers=len(keys)) as ex:
+                    futs = {ex.submit(fn[k]): k for k in keys if k in fn}
+                    for f in as_completed(futs, timeout=15):
+                        k = futs[f]
+                        try: res[k] = f.result() or []
+                        except Exception: res[k] = []
+            except Exception as e:
+                print(f'[BOARDS] 并行失败: {e}')
+        for k in keys:
+            if k not in res:
+                try: res[k] = fn[k]() if k in fn else []
+                except Exception: res[k] = []
+        groups = []
+        for m in self.SRC_META:
+            if m['key'] not in keys: continue
+            groups.append({'key':m['key'], 'name':m['name'], 'icon':m['icon'], 'boards':res.get(m['key']) or []})
+        # 兼容旧前端：boards 字段 = 第一个平台的榜单
+        flat = groups[0]['boards'] if groups else []
+        return {'groups': groups, 'boards': flat}
+
+    def _board(self, bid, page=1, src='kw'):
+        if src == 'kw':
+            url = f'http://kbangserver.kuwo.cn/ksong.s?from=pc&fmt=json&pn={page-1}&rn=30&type=bang&data=content&id={bid}&show_copyright_off=0&pcmp4=1&isbang=1'
+            d = self._get(url)
             songs = []
-            for s in d['musiclist']:
+            for s in ((d or {}).get('musiclist') or []):
                 mid = str(s.get('id','') or s.get('musicrid','')).replace('MUSIC_','')
                 if not mid: continue
-                dur = int(s.get('song_duration',0) or s.get('duration',0))
-                songs.append({'id':mid,'songmid':mid,'name':s.get('name',''),'artist':s.get('artist',''),'album':s.get('album',''),'duration':dur,'source':'kw'})
+                songs.append({'id':mid,'songmid':mid,'name':s.get('name',''),'artist':s.get('artist',''),
+                              'album':s.get('album',''),
+                              'duration':int(s.get('song_duration',0) or s.get('duration',0) or 0),'source':'kw'})
             return {'songs':songs,'total':len(songs)}
+
+        if src == 'wy':
+            d = self._get(f'https://music.163.com/api/v6/playlist/detail?id={bid}&n=100',
+                          {'Referer':'https://music.163.com/'})
+            pl = ((d or {}).get('playlist') or {})
+            songs = []
+            for s in (pl.get('tracks') or []):
+                sid = str(s.get('id') or '')
+                if not sid: continue
+                songs.append({'id':sid,'songmid':sid,'name':s.get('name',''),
+                              'artist':'/'.join(a.get('name','') for a in s.get('ar',[])),
+                              'album':(s.get('al') or {}).get('name',''),
+                              'duration':int(s.get('dt',0) or 0)//1000,'source':'wy'})
+            return {'songs':songs,'total':len(songs),'name':pl.get('name',''),'pic':pl.get('coverImgUrl','')}
+
+        if src == 'tx':
+            url = f'https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg?topid={bid}&format=json&page=1&num=100&song_begin=0'
+            d = self._get(url, {'Referer':'https://y.qq.com/'})
+            songs = []
+            for it in ((d or {}).get('songlist') or []):
+                s = it.get('data') or {}
+                mid = s.get('songmid') or ''
+                if not mid: continue
+                songs.append({'id':mid,'songmid':mid,'name':s.get('songname',''),
+                              'artist':'/'.join(a.get('name','') for a in s.get('singer',[])),
+                              'album':s.get('albumname',''),'duration':int(s.get('interval',0) or 0),'source':'tx'})
+            return {'songs':songs,'total':len(songs),'name':(d or {}).get('topinfo',{}).get('ListName','') if isinstance((d or {}).get('topinfo'),dict) else ''}
+
+        if src == 'kg':
+            # ⚠ 别用 mobilecdn 的 /api/v3/rank/song —— 它多数榜单只返回 1~5 首（接口已半废）。
+            #   用移动 web 接口，正确路径是 songs.list（不是 data.info）。
+            d = self._get(f'http://m.kugou.com/rank/info/?rankid={bid}&page={page}&json=true',
+                          {'Referer':'http://m.kugou.com/'})
+            lst = (((d or {}).get('songs') or {}).get('list')) or []
+            songs = []
+            for s in lst:
+                h = s.get('hash') or ''
+                if not h: continue
+                sid = str(s.get('album_audio_id') or s.get('audio_id') or h)
+                ex = {'h128': h, 'h320': s.get('hash_high') or s.get('320hash') or '',
+                      'hflac': s.get('sqhash') or ''}
+                _song_extra_put(('kg', sid), ex); _song_extra_put(('kg', h), ex)
+                # 歌手：优先 authors 列表里的名字，其次从 "歌手 - 歌名" 里切
+                ar = ''
+                au = s.get('authors') or []
+                if isinstance(au, list) and au and isinstance(au[0], dict):
+                    ar = au[0].get('author_name') or au[0].get('name') or au[0].get('nickname') or ''
+                fn = s.get('filename') or ''
+                if not ar and ' - ' in fn: ar = fn.split(' - ',1)[0]
+                nm = s.get('songname') or (fn.split(' - ',1)[1] if ' - ' in fn else fn)
+                songs.append({'id':sid,'songmid':sid,'name':nm,'artist':ar,
+                              'album':s.get('remark','') or '', 'duration':int(s.get('duration',0) or 0),
+                              'source':'kg'})
+            return {'songs':songs,'total':int(((d or {}).get('songs') or {}).get('total') or len(songs))}
+
         return {'songs':[],'total':0}
 
     # ====== 热搜词 ======
@@ -715,26 +1035,115 @@ class H(http.server.SimpleHTTPRequestHandler):
         return {'words':[]}
 
     # ====== 推荐歌单 ======
-    def _tj(self):
-        # 酷我PC端推荐歌单API
-        url = 'http://wapi.kuwo.cn/api/pc/classify/playlist/getRcmPlayList?pn=1&rn=30&order=hot&pay=0'
-        d = self._get(url, {'Referer':'https://www.kuwo.cn/','User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
-        if d and d.get('code')==200 and d.get('data') and d['data'].get('data'):
-            playlists = []
-            for p in d['data']['data']:
-                playlists.append({
-                    'name': p.get('name',''),
-                    'id': str(p.get('id','')),
-                    'img': p.get('img',''),
-                    'count': p.get('listencnt',0),
-                    'total': p.get('total',0),
-                    'author': p.get('uname','')
-                })
-            return {'playlists': playlists, 'total': d['data'].get('total',0)}
-        return {'playlists':[]}
+    def _tj_one(self, src, limit=30):
+        """单平台推荐歌单"""
+        try:
+            if src == 'kw':
+                url = f'http://wapi.kuwo.cn/api/pc/classify/playlist/getRcmPlayList?pn=1&rn={limit}&order=hot&pay=0'
+                d = self._get(url, {'Referer':'https://www.kuwo.cn/','User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+                out = []
+                for p in (((d or {}).get('data') or {}).get('data') or []):
+                    out.append({'name': p.get('name',''), 'id': str(p.get('id','')), 'img': p.get('img',''),
+                                'count': p.get('listencnt',0), 'total': p.get('total',0),
+                                'author': p.get('uname',''), 'source':'kw'})
+                return out
+
+            if src == 'wy':
+                d = self._get(f'https://music.163.com/api/personalized/playlist?limit={limit}',
+                              {'Referer':'https://music.163.com/'})
+                out = []
+                for p in ((d or {}).get('result') or []):
+                    out.append({'name': p.get('name',''), 'id': str(p.get('id','')),
+                                'img': p.get('picUrl',''), 'count': p.get('playCount',0),
+                                'total': p.get('trackCount',0), 'author': (p.get('creator') or {}).get('nickname',''),
+                                'source':'wy'})
+                return out
+
+            # QQ / 酷狗没有稳定的「推荐」接口，用它们的歌单搜索兜底（关键词换成热门）
+            return self._playlists_one(src, '热门', limit)
+        except Exception as e:
+            print(f'[TJ] {src} 失败: {type(e).__name__}: {e}')
+        return []
+
+    def _tj(self, src='all'):
+        if src not in ('all', ''):
+            out = self._tj_one(src)
+            return {'playlists': out, 'total': len(out), 'source': src}
+        keys = [m['key'] for m in self.SRC_META]
+        res = {}
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=len(keys)) as ex:
+                futs = {ex.submit(self._tj_one, k): k for k in keys}
+                for f in as_completed(futs, timeout=18):
+                    k = futs[f]
+                    try: res[k] = f.result() or []
+                    except Exception: res[k] = []
+        except Exception as e:
+            print(f'[TJ] 并行失败: {e}')
+        for k in keys:
+            if k not in res:
+                try: res[k] = self._tj_one(k)
+                except Exception: res[k] = []
+        groups = [{'key':m['key'], 'name':m['name'], 'icon':m['icon'], 'playlists':res.get(m['key']) or []}
+                  for m in self.SRC_META]
+        flat = []
+        for i in range(12):
+            for m in self.SRC_META:
+                lst = res.get(m['key']) or []
+                if i < len(lst): flat.append(lst[i])
+        return {'groups': groups, 'playlists': flat, 'total': len(flat), 'source': 'all'}
 
     # ====== 歌单详情 ======
-    def _playlist(self, pid, page=1):
+    def _playlist(self, pid, page=1, src='kw'):
+        if src == 'wy':
+            d = self._get(f'https://music.163.com/api/v6/playlist/detail?id={pid}&n=500',
+                          {'Referer':'https://music.163.com/'})
+            pl = ((d or {}).get('playlist') or {})
+            songs = []
+            for s in (pl.get('tracks') or []):
+                sid = str(s.get('id') or '')
+                if not sid: continue
+                songs.append({'id':sid,'songmid':sid,'name':s.get('name',''),
+                              'artist':'/'.join(a.get('name','') for a in s.get('ar',[])),
+                              'album':(s.get('al') or {}).get('name',''),
+                              'duration':int(s.get('dt',0) or 0)//1000,'source':'wy'})
+            return {'songs':songs,'total':len(songs),'name':pl.get('name',''),'pic':pl.get('coverImgUrl','')}
+
+        if src == 'tx':
+            url = (f'https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?type=1&json=1&utf8=1'
+                   f'&onlysong=0&disstid={pid}&format=json&song_begin=0&song_num=500')
+            d = self._get(url, {'Referer':'https://y.qq.com/'})
+            cd = (d or {}).get('cdlist') or []
+            songs = []
+            if cd:
+                for s in (cd[0].get('songlist') or []):
+                    mid = s.get('songmid') or ''
+                    if not mid: continue
+                    songs.append({'id':mid,'songmid':mid,'name':s.get('songname',''),
+                                  'artist':'/'.join(a.get('name','') for a in s.get('singer',[])),
+                                  'album':s.get('albumname',''),'duration':int(s.get('interval',0) or 0),'source':'tx'})
+                return {'songs':songs,'total':len(songs),'name':cd[0].get('dissname',''),
+                        'pic':cd[0].get('logo','')}
+            return {'songs':[],'total':0}
+
+        if src == 'kg':
+            d = self._get(f'http://mobilecdn.kugou.com/api/v3/special/song?specialid={pid}&page={page}&pagesize=100&plat=2&version=8000')
+            songs = []
+            for s in (((d or {}).get('data') or {}).get('info') or []):
+                h = s.get('hash') or ''
+                if not h: continue
+                sid = str(s.get('audio_id') or h)
+                ex = {'h128': h, 'h320': s.get('hqhash') or '', 'hflac': s.get('sqhash') or ''}
+                _song_extra_put(('kg', sid), ex); _song_extra_put(('kg', h), ex)
+                fn = s.get('filename') or ''
+                nm = s.get('songname') or (fn.split(' - ',1)[1] if ' - ' in fn else fn)
+                ar = s.get('singername') or (fn.split(' - ',1)[0] if ' - ' in fn else '')
+                songs.append({'id':sid,'songmid':sid,'name':nm,'artist':ar,
+                              'album':s.get('album_name',''),'duration':int(s.get('duration',0) or 0),'source':'kg'})
+            return {'songs':songs,'total':len(songs)}
+
+        # 酷我（默认）
         url = f'http://nplserver.kuwo.cn/pl.svc?op=getlistinfo&pid={pid}&pn={page-1}&rn=50&encode=utf8&keyset=pl2012&identity=kuwo&pcmp4=1&vipver=1&newver=1'
         d = self._get(url)
         if d and d.get('musiclist'):
@@ -747,7 +1156,7 @@ class H(http.server.SimpleHTTPRequestHandler):
                     'name': s.get('name',''),
                     'artist': s.get('artist',''),
                     'album': s.get('album',''),
-                    'duration': int(s.get('duration',0)),
+                    'duration': int(s.get('duration',0) or 0),
                     'source': 'kw'
                 })
             return {'songs': songs, 'total': d.get('total',0), 'name': d.get('title',''), 'pic': d.get('pic','')}
@@ -852,19 +1261,102 @@ class H(http.server.SimpleHTTPRequestHandler):
         return {'sections': sections, 'cached': False, 'age': 0}
 
     # ====== 精选歌单（儿童专区图片入口）======
-    def _playlists(self, kw='儿歌', limit=20):
-        url = ('http://search.kuwo.cn/r.s?client=kt&all=' + urllib.parse.quote(kw) +
-               f'&pn=0&rn={limit}&ft=playlist&encoding=utf8&rformat=json&show_copyright_off=1&vipver=1&newver=1&mobi=1')
-        d = self._get(url)
-        out = []
-        for p in ((d or {}).get('abslist') or []):
-            pid = str(p.get('playlistid') or p.get('DC_TARGETID') or '')
-            if not pid or pid == 'None': continue
-            out.append({'id': pid, 'name': p.get('name', ''), 'pic': p.get('pic') or p.get('hts_pic', ''),
-                        'songnum': int(p.get('songnum') or 0), 'tags': p.get('tags', ''),
-                        'playcnt': int(p.get('playcnt') or 0), 'author': p.get('nickname', ''),
-                        'intro': p.get('intro', '')})
-        return {'playlists': out, 'total': len(out), 'keyword': kw}
+    def _playlists_one(self, src, kw, limit):
+        """单平台歌单搜索"""
+        try:
+            if src == 'kw':
+                url = ('http://search.kuwo.cn/r.s?client=kt&all=' + urllib.parse.quote(kw) +
+                       f'&pn=0&rn={limit}&ft=playlist&encoding=utf8&rformat=json&show_copyright_off=1&vipver=1&newver=1&mobi=1')
+                d = self._get(url)
+                out = []
+                for p in ((d or {}).get('abslist') or []):
+                    pid = str(p.get('playlistid') or p.get('DC_TARGETID') or '')
+                    if not pid or pid == 'None': continue
+                    out.append({'id': pid, 'name': p.get('name', ''), 'pic': p.get('pic') or p.get('hts_pic', ''),
+                                'songnum': int(p.get('songnum') or 0), 'tags': p.get('tags', ''),
+                                'playcnt': int(p.get('playcnt') or 0), 'author': p.get('nickname', ''),
+                                'intro': p.get('intro', ''), 'source':'kw'})
+                return out
+
+            if src == 'wy':
+                url = (f'https://music.163.com/api/search/get/web?s={urllib.parse.quote(kw)}'
+                       f'&type=1000&offset=0&limit={limit}')
+                d = self._get(url, {'Referer':'https://music.163.com/'})
+                out = []
+                for p in (((d or {}).get('result') or {}).get('playlists') or []):
+                    pid = str(p.get('id') or '')
+                    if not pid: continue
+                    out.append({'id':pid, 'name':p.get('name',''), 'pic':p.get('coverImgUrl','') or p.get('picUrl',''),
+                                'songnum':int(p.get('trackCount') or 0), 'tags':'',
+                                'playcnt':int(p.get('playCount') or 0), 'author':(p.get('creator') or {}).get('nickname',''),
+                                'intro':p.get('description','') or '', 'source':'wy'})
+                return out
+
+            if src == 'tx':
+                url = (f'https://c.y.qq.com/soso/fcgi-bin/client_music_search_songlist?remoteplace=txt.yqq.playlist'
+                       f'&page_no=0&num_per_page={limit}&query={urllib.parse.quote(kw)}&format=json')
+                d = self._get(url, {'Referer':'https://y.qq.com/'})
+                out = []
+                for p in (((d or {}).get('data') or {}).get('list') or []):
+                    pid = str(p.get('dissid') or '')
+                    if not pid: continue
+                    out.append({'id':pid, 'name':(p.get('dissname') or '').replace('&#45;','-'),
+                                'pic':p.get('imgurl',''), 'songnum':int(p.get('song_count') or 0), 'tags':'',
+                                'playcnt':int(p.get('listennum') or 0),
+                                'author':(p.get('creator') or {}).get('name',''), 'intro':'', 'source':'tx'})
+                return out
+
+            if src == 'kg':
+                url = (f'http://mobilecdn.kugou.com/api/v3/search/special?keyword={urllib.parse.quote(kw)}'
+                       f'&page=1&pagesize={limit}&plat=2')
+                d = self._get(url)
+                out = []
+                for p in (((d or {}).get('data') or {}).get('info') or []):
+                    pid = str(p.get('specialid') or '')
+                    if not pid: continue
+                    out.append({'id':pid, 'name':p.get('specialname',''),
+                                'pic':(p.get('imgurl') or '').replace('{size}','240'),
+                                'songnum':int(p.get('songcount') or 0), 'tags':'',
+                                'playcnt':int(p.get('playcount') or 0), 'author':p.get('nickname',''),
+                                'intro':p.get('intro','') or '', 'source':'kg'})
+                return out
+        except Exception as e:
+            print(f'[PLAYLISTS] {src} 失败: {type(e).__name__}: {e}')
+        return []
+
+    def _playlists(self, kw='儿歌', limit=20, src='all'):
+        """歌单搜索。src='all' 时并行查全部平台并分组返回"""
+        if src not in ('all', ''):
+            out = self._playlists_one(src, kw, limit)
+            return {'playlists': out, 'total': len(out), 'source': src, 'keyword': kw}
+        keys = [m['key'] for m in self.SRC_META]
+        per = max(6, min(limit, 15))
+        res = {}
+        try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=len(keys)) as ex:
+                futs = {ex.submit(self._playlists_one, k, kw, per): k for k in keys}
+                for f in as_completed(futs, timeout=18):
+                    k = futs[f]
+                    try: res[k] = f.result() or []
+                    except Exception: res[k] = []
+        except Exception as e:
+            print(f'[PLAYLISTS] 并行失败: {e}')
+        for k in keys:
+            if k not in res:
+                try: res[k] = self._playlists_one(k, kw, per)
+                except Exception: res[k] = []
+        groups = []
+        for m in self.SRC_META:
+            groups.append({'key':m['key'], 'name':m['name'], 'icon':m['icon'],
+                           'playlists': res.get(m['key']) or []})
+        flat = []
+        for i in range(per):                      # 轮转交错，各平台都能露面
+            for m in self.SRC_META:
+                lst = res.get(m['key']) or []
+                if i < len(lst): flat.append(lst[i])
+        return {'groups': groups, 'playlists': flat[:limit], 'total': len(flat),
+                'source':'all', 'keyword': kw}
 
     def _health(self):
         return {'ok': True, 'app': 'baobao-music', 'port': PORT,

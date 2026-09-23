@@ -131,6 +131,58 @@ def _webview_available():
         return True      # 检测不了就乐观一点，失败还有兜底
 
 
+class _WinApi:
+    """页面标题栏用的窗口控制。
+
+    frameless=True 之后系统标题栏（含最小化/最大化/关闭按钮）没有了，
+    改由页面里那条与整体同色的标题栏提供，按钮通过 pywebview.api.* 调过来。
+    """
+
+    def __init__(self):
+        self._maxed = False
+
+    @staticmethod
+    def _w():
+        try:
+            import webview
+            return webview.windows[0]
+        except Exception:
+            return None
+
+    def minimize(self):
+        w = self._w()
+        if w:
+            try:
+                w.minimize()
+            except Exception as e:
+                _log(f"[窗口] 最小化失败: {e}")
+        return True
+
+    def toggle_max(self):
+        w = self._w()
+        if not w:
+            return False
+        try:
+            if self._maxed:
+                w.restore()
+            else:
+                w.maximize()
+            self._maxed = not self._maxed
+        except Exception as e:
+            _log(f"[窗口] 最大化切换失败: {e}")
+            return False
+        return self._maxed
+
+    def close(self):
+        w = self._w()
+        if w:
+            try:
+                w.destroy()
+            except Exception as e:
+                _log(f"[窗口] 关闭失败: {e}")
+        return True
+
+
 def _open_native_window(port):
     """原生窗口（阻塞到用户关闭窗口）。返回 True=正常关闭，False=起不来"""
     try:
@@ -138,6 +190,21 @@ def _open_native_window(port):
     except Exception as e:
         _log(f"[窗口] pywebview 不可用: {e}")
         return False
+    # ==== WebView2 黑屏修复 ====
+    # 现象：播着歌窗口突然卡住、客户区变纯黑，但进程活着、标题栏正常、后端 /api/health 仍秒回
+    #       —— 说明是 WebView2 渲染表面丢了，不是页面或后端的问题。
+    # 原因：Windows 的原生窗口遮挡检测（CalculateNativeWinOcclusion）判定窗口被遮挡/失焦后，
+    #       WebView2 会停止合成；之后窗口重新可见时不一定恢复重绘 → 一直黑着。
+    #       这是 WebView2 的已知问题，高 DPI / 多显示器场景更容易触发。
+    # 处理：关掉这个遮挡检测；另外留一个软件渲染的后路（MB_SOFTWARE_RENDER=1），
+    #       万一显卡驱动层面还有问题可以整条绕过 GPU。
+    _args = ['--disable-features=CalculateNativeWinOcclusion']
+    if os.environ.get('MB_SOFTWARE_RENDER', '').strip() in ('1', 'true', 'yes'):
+        _args += ['--disable-gpu', '--disable-gpu-compositing', '--disable-software-rasterizer']
+        _log('[窗口] 软件渲染模式（已禁用 GPU）')
+    _prev = os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', '')
+    os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = (_prev + ' ' + ' '.join(_args)).strip()
+    _log(f'[窗口] WebView2 参数: {os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"]}')
     url = f"http://127.0.0.1:{port}/player.html"
     try:
         webview.create_window(
@@ -147,6 +214,11 @@ def _open_native_window(port):
             background_color="#0f0f16",
             text_select=False,
             confirm_close=False,
+            # 无边框：不要系统标题栏（那条灰白边框和整体暗色设计不搭），
+            # 改由页面里 .winBar 自己画最小化/最大化/关闭，拖拽靠 .pywebview-drag-region
+            frameless=True,
+            easy_drag=False,
+            js_api=_WinApi(),
         )
         webview.start()          # 阻塞直到窗口关闭
         return True

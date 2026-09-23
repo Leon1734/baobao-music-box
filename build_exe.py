@@ -37,6 +37,7 @@ BUNDLE = [
 BUNDLE_DIRS = [
     "photos_web",
     "音源",
+    "wallpapers",     # 壁纸皮肤：设置页按 wallpapers/xxx.jpg 取图，不打进去选了壁纸会 404
 ]
 BUNDLE_OPT = []   # 默认不打包任何配置
 

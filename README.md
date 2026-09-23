@@ -17,8 +17,8 @@
 
 ### Windows：直接用 exe（推荐）
 
-1. 从 [Releases](../../releases) 下载 `baobao-music-box-v1.1.0-win64.exe`
-2. 双击运行 —— 直接弹出**原生播放器窗口**（Edge WebView2 内核，不是浏览器标签页）
+1. 从 [Releases](../../releases) 下载 `baobao-music-box-v1.2.0-win64.exe`
+2. 双击运行 —— 直接弹出**原生播放器窗口**（Edge WebView2 内核，不是浏览器标签页；无边框自绘标题栏，与整体同色）
 3. 关掉窗口即退出
 
 > 不需要装 Python，不需要装任何东西。exe 约 31MB（内含照片/音源，开箱即用）。
@@ -26,7 +26,7 @@
 
 ### Android：装 APK
 
-从 Releases 下载 `baobao-music-box-v1.1.0-android.apk`，在手机上点开安装
+从 Releases 下载 `baobao-music-box-v1.2.0-android.apk`，在手机上点开安装
 （需要允许「安装未知来源应用」）。
 
 > 安卓版把同一份 `server.py` 用 [Chaquopy](https://chaquo.com/chaquopy/) 跑在 APK 里，
@@ -100,11 +100,14 @@ cp config.example.json config.json
 
 | 分类 | 内容 |
 |------|------|
-| **音乐库** | 首页推荐 · 在线搜索（分页加载）· 排行榜（18 个榜单）· 歌单详情 · 儿童专区（7 个分类 + 精选歌单） |
+| **多音源** | 酷我 / 网易云 / QQ / 酷狗 **四平台**搜索与播放；哪个平台播不了自动跨源换源兜底 |
+| **音乐库** | 首页推荐 · 在线搜索（分页加载）· 排行榜（137 个榜单）· 推荐歌单（106 个）· 歌单详情 · 儿童专区（7 个分类 + 精选歌单） |
+| **平台切换** | 榜单 / 推荐歌单 / 歌单搜索都按平台分 Tab，选哪个平台就只看哪个平台，选择会记住 |
 | **本地** | 选择文件 / 选择文件夹（记住授权，下次自动恢复）· 拖拽导入 · 自动读时长 |
 | **个人** | 我喜欢 · 我的歌单（新建/重命名/删除）· 最近播放 · 播放统计（收听时长 + 最常听 TOP20 + 一键生成「宝宝最爱」） |
-| **播放** | 10 段均衡器 · 倍速 · 频谱可视化 · 15 种主题色 · 睡眠定时（15/30/45/60/90 分 + 播完本曲 + 淡出） |
-| **歌词** | 多源自动回退 · 逐行高亮 · 全屏歌词 · 点击跳转 · 字号/偏移可调 · 手动滚动后自动恢复跟随 |
+| **播放** | 10 段均衡器 · 倍速 · 频谱可视化（6 种样式：柱状/镜像/峰值/波形/点阵/圆环）· 15 种主题色 · 壁纸皮肤（5 张）· 睡眠定时（15/30/45/60/90 分 + 播完本曲 + 淡出） |
+| **全屏播放页** | 大封面 + 大歌词左右分栏 · 完整控制 · 底部频谱跳动 · 播放列表抽屉（快捷键 `Q`）|
+| **歌词** | 多源自动回退 · 逐行高亮 · 全屏歌词 · 双语歌词配对高亮（原文+译文一起亮）· 点击跳转 · 字号/偏移可调 · 手动滚动后自动恢复跟随 |
 | **离线** | 歌曲缓存到本地（IndexedDB）· 缓存管理 · 无网可播 |
 | **其他** | PWA 可安装 · 歌单导入导出 · 全量备份 / 恢复 · 快捷键（按 `?` 看全部） |
 
@@ -130,20 +133,26 @@ cp config.example.json config.json
 python build_exe.py        # 产物在 dist/
 
 # 自动化测试（需要 playwright + 本地 Chrome）
-python verify.py           # 24 项功能回归
-python stress.py           # 8 项压力测试（内存泄漏 / 竞态 / 边界输入）
+python tools/verify.py      # 27 项功能回归
+python tools/verify_ui.py   # 无边框标题栏 / 歌单详情视图
+python tools/verify_fs.py   # 全屏播放列表 + 6 种频谱样式
+python tools/stress.py      # 8 项压力测试（内存泄漏 / 竞态 / 边界输入）
+python tools/preview.py     # 生成界面预览截图
 ```
 
 ### 目录结构
 
 ```
-app.py                 exe 入口（选端口、开浏览器、错误兜底）
-server.py              本地服务（20 个 API + 音频代理 + 歌词多源竞速）
-player.html            单文件前端（约 3700 行，10 个页面标签）
+app.py                 exe 入口（选端口、开原生窗口、错误兜底）
+server.py              本地服务（多音源聚合 + 音频代理 + 歌词多源竞速）
+player.html            单文件前端（约 4400 行，10 个页面标签）
 manifest.json / sw.js  PWA
 build_exe.py           PyInstaller 打包脚本
-verify.py / stress.py  自动化测试
-tools/                 辅助脚本（照片压缩等）
+tools/                 测试与预览脚本（verify*.py / preview.py / stress.py）
+docs/screenshots/      界面截图
+reference/             参考的开源项目（洛雪音源等）
+archive/               历史原型与备份
+音源/ wallpapers/      内置音源 .js / 壁纸图片
 ```
 
 ---
