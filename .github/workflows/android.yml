@@ -79,7 +79,17 @@ jobs:
       - name: 重命名（ASCII 文件名，中文会被 GitHub 吞掉）
         run: |
           cd out
-          for f in *.apk; do mv "$f" "baobao-music-box-v1.1.0-android.apk"; done
+          # 版本号从触发来源推导，别再写死 —— 写死会导致新 APK 顶着旧版本号，
+          # 用户下载时以为拿的是旧版（v1.2.0 的 APK 曾被命名成 v1.1.0）。
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VER="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.release_tag }}" ]; then
+            VER="${{ inputs.release_tag }}"
+          else
+            VER="dev-${GITHUB_SHA:0:7}"
+          fi
+          echo "APK 版本号: $VER"
+          for f in *.apk; do mv "$f" "baobao-music-box-${VER}-android.apk"; done
           ls -lh
 
       - name: 上传构建产物
