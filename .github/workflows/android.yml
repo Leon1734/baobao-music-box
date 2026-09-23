@@ -54,15 +54,16 @@ jobs:
       - name: 同步播放器代码到 Android 工程
         run: python tools/sync_android_assets.py
 
-      - name: 生成 Gradle wrapper（工程里不放二进制）
-        working-directory: android
-        run: |
-          gradle wrapper --gradle-version 8.9 --distribution-type bin
+      - name: 设置 Gradle 8.9
+        # 必须锁版本：runner 自带 Gradle 9.x，而 AGP 8.5 不兼容 Gradle 9
+        # （wrapper 任务要先评估构建脚本，会直接 BUILD FAILED）
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
 
       - name: 构建 Release APK
         working-directory: android
-        run: |
-          ./gradlew --no-daemon assembleRelease
+        run: gradle --no-daemon assembleRelease
 
       - name: 收集产物
         run: |
