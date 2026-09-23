@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色无标题栏，和播放器页面同色，启动时不会有白闪 -->
+    <style name="Theme.BaobaoMusic" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#0f0f16</item>
+        <item name="android:statusBarColor">#0f0f16</item>
+        <item name="android:navigationBarColor">#0f0f16</item>
+    </style>
+</resources>

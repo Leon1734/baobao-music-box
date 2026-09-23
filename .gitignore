@@ -50,3 +50,19 @@ server.js
 test_lx.js
 gen_html.py
 lx-loader.js
+
+# ===== Android 构建产物 =====
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/gradle/
+android/gradlew
+android/gradlew.bat
+*.apk
+*.aab
+
+# Android assets 是同步出来的，不入库（由 tools/sync_android_assets.py 生成）
+# 注意：只忽略同步产物，Kotlin/Gradle 源码要入库
+android/app/src/main/assets/
+android/app/src/main/python/

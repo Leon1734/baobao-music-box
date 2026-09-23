@@ -8,17 +8,39 @@ from pathlib import Path
 PORT = int(os.environ.get('MB_PORT', 8082))   # 可用环境变量换端口，避免多实例端口冲突
 
 def _resolve_dirs():
-    """解析 资源目录(只读) 与 数据目录(可写)，兼容源码运行和 PyInstaller 打包：
+    """解析 资源目录(只读) 与 数据目录(可写)，兼容源码运行、PyInstaller 打包、Android：
       · 源码运行：两者都是脚本所在目录
       · exe 运行：资源在 PyInstaller 解包目录(_MEIPASS)，
                   数据(照片/音源/缓存)在 exe 同级目录，方便用户自己放文件
+      · Android (Chaquopy)：Python 文件打包在 APK 内(只读 zip)，
+                  由 Kotlin 侧把 assets 里的 player.html/照片/音源 拷到应用私有目录，
+                  再用 MB_DATA_DIR 指过去 —— 这样资源目录和数据目录都是普通可写目录
     """
+    override = os.environ.get('MB_DATA_DIR', '').strip()
+    if override:
+        d = Path(override)
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return d, d
     if getattr(sys, 'frozen', False):
         res = Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent))
         data = Path(sys.executable).parent
     else:
         res = data = Path(__file__).parent
     return res, data
+
+
+def set_port(p):
+    """供外部（Android/启动器）在 serve() 之前改端口"""
+    global PORT
+    try:
+        PORT = int(p)
+        os.environ['MB_PORT'] = str(PORT)
+    except Exception:
+        pass
+    return PORT
 
 RES_DIR, DATA_DIR = _resolve_dirs()
 BASE = DATA_DIR          # 兼容旧代码：可写数据都放这里
