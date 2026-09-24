@@ -72,3 +72,8 @@ docs/screenshots/
 
 # 临时提交信息文件
 COMMIT_MSG*.txt
+
+# 调试窗口抓图
+_real_*.png
+_app.png
+_foot.png
