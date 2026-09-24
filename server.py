@@ -290,6 +290,60 @@ class H(http.server.SimpleHTTPRequestHandler):
         except CONN_ERRORS:
             pass
 
+    def _pmap(self, fn_map, deadline=8.0, grace=0.0):
+        """并行执行 {key: callable}，到 deadline 就返回已拿到的结果，缺失的补空。
+
+        grace>0 时：过了 grace 秒只要已有非空结果就**提前返回**（慢源补空）。
+        为什么需要：实测榜单 4 平台里有 1 个慢，8 秒才回来 8111ms —— 可第 3 秒时
+        另外 3 个平台已经给完了。干等慢源毫无意义，宁可先出界面。
+
+        ⚠️ 为什么不能用 as_completed(timeout=...) + 「串行兜底」这套老写法：
+          ① as_completed 超时抛 TimeoutError，直接中断收集循环；
+          ② 后面的 `for k not in res: 串行重跑` 会把慢平台一个个**同步**再来一遍，
+             最坏 18s + 4×15s = 78 秒 —— 用户看到的是"搜索卡了一分多钟"；
+          ③ `with ThreadPoolExecutor(...)` 异常退出时 __exit__ 走 shutdown(wait=True)，
+             还要等所有线程跑完才真正返回。
+        改法：wait(短超时) 轮询 + 硬截止时间。超时的直接补空——宁可少给结果，
+        也不能让界面卡住。shutdown(wait=False, cancel_futures=True) 收尾不等残留。
+        """
+        keys = list(fn_map)
+        if not keys:
+            return {}
+        if len(keys) == 1:                      # 单平台不值得开线程池
+            k = keys[0]
+            try:
+                return {k: fn_map[k]() or []}
+            except Exception:
+                return {k: []}
+        from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+        ex = ThreadPoolExecutor(max_workers=min(len(keys), 8))
+        try:
+            futs = {ex.submit(fn_map[k]): k for k in keys}
+            pending = set(futs)
+            res = {}
+            t0 = time.time()
+            end = t0 + deadline
+            while pending:
+                done, pending = wait(pending, timeout=0.2,
+                                     return_when=FIRST_COMPLETED)
+                for f in done:
+                    k = futs[f]
+                    try:
+                        res[k] = f.result() or []
+                    except Exception as e:
+                        print(f'[PMAP] {k} 异常: {e}')
+                        res[k] = []
+                now = time.time()
+                if now > end:
+                    break                        # ← 硬截止，不等慢源
+                if grace and (now - t0) > grace and any(res.values()):
+                    break                        # ← 宽限期到，已有结果就先走
+            for k in keys:
+                res.setdefault(k, [])
+            return res
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+
     def _get(self, url, headers=None, timeout=15, retries=2):
         """GET 取 JSON。带重试 —— 本机 DNS/网络会瞬时抖动
         （实测并发请求时出现过 getaddrinfo failed / 超时，但同一地址单独请求就正常），
@@ -508,24 +562,12 @@ class H(http.server.SimpleHTTPRequestHandler):
             return {'songs': songs, 'total': len(songs), 'source': src, 'page': page,
                     'has_more': len(songs) >= limit}
 
-        # 并行搜全部平台
+        # 并行搜全部平台（_pmap：硬截止 8 秒，慢源补空，不串行重跑）
         keys = [m['key'] for m in self.SRC_META]
         per = max(6, min(limit, 20))          # 每平台取多少（太多会拖慢）
-        results = {}
-        try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            with ThreadPoolExecutor(max_workers=len(keys)) as ex:
-                futs = {ex.submit(self._search_one, k, kw, per, page): k for k in keys}
-                for f in as_completed(futs, timeout=18):
-                    k = futs[f]
-                    try: results[k] = f.result() or []
-                    except Exception: results[k] = []
-        except Exception as e:
-            print(f'[SEARCH] all 并行失败: {e}')
-            for k in keys:
-                if k not in results:
-                    try: results[k] = self._search_one(k, kw, per, page) or []
-                    except Exception: results[k] = []
+        results = self._pmap(
+            {k: (lambda kk=k: self._search_one(kk, kw, per, page)) for k in keys},
+            deadline=8.0, grace=3.0)   # 3 秒后有结果就先出，不干等慢平台
 
         # 轮转交错：A1 B1 C1 D1 A2 B2 ... —— 各平台并列展示，而不是某平台霸屏
         merged, seen = [], set()
@@ -593,16 +635,11 @@ class H(http.server.SimpleHTTPRequestHandler):
         q = (name + ' ' + (artist or '')).strip()
         keys = [m['key'] for m in self.SRC_META if m['key'] != exclude]
         cands = []
-        try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            with ThreadPoolExecutor(max_workers=len(keys)) as ex:
-                futs = {ex.submit(self._search_one, k, q, 5, 1): k for k in keys}
-                for f in as_completed(futs, timeout=timeout):
-                    k = futs[f]
-                    try: cands.extend((f.result() or [])[:4])
-                    except Exception: pass
-        except Exception as e:
-            print(f'[CROSS] 搜索失败: {e}')
+        got = self._pmap(
+            {k: (lambda kk=k: self._search_one(kk, q, 5, 1)) for k in keys},
+            deadline=timeout)
+        for k in keys:
+            cands.extend((got.get(k) or [])[:4])
         if not cands:
             return None
         # 先按歌名相似度排（同名优先），逐个试链接
@@ -927,20 +964,12 @@ class H(http.server.SimpleHTTPRequestHandler):
         keys = [m['key'] for m in self.SRC_META] if src in ('all','') else [src]
         res = {}
         if len(keys) > 1:
-            try:
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                with ThreadPoolExecutor(max_workers=len(keys)) as ex:
-                    futs = {ex.submit(fn[k]): k for k in keys if k in fn}
-                    for f in as_completed(futs, timeout=15):
-                        k = futs[f]
-                        try: res[k] = f.result() or []
-                        except Exception: res[k] = []
-            except Exception as e:
-                print(f'[BOARDS] 并行失败: {e}')
+            # _pmap：硬截止 8 秒，慢平台补空榜单，绝不串行重跑（老写法最坏 15+4×15=75 秒）
+            res = self._pmap(
+                {k: (lambda kk=k: fn[kk]()) for k in keys if k in fn},
+                deadline=8.0, grace=3.0)   # 实测 8111ms 卡满上限，3 秒有结果就先出
         for k in keys:
-            if k not in res:
-                try: res[k] = fn[k]() if k in fn else []
-                except Exception: res[k] = []
+            res.setdefault(k, [])
         groups = []
         for m in self.SRC_META:
             if m['key'] not in keys: continue
@@ -1070,21 +1099,10 @@ class H(http.server.SimpleHTTPRequestHandler):
             out = self._tj_one(src)
             return {'playlists': out, 'total': len(out), 'source': src}
         keys = [m['key'] for m in self.SRC_META]
-        res = {}
-        try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            with ThreadPoolExecutor(max_workers=len(keys)) as ex:
-                futs = {ex.submit(self._tj_one, k): k for k in keys}
-                for f in as_completed(futs, timeout=18):
-                    k = futs[f]
-                    try: res[k] = f.result() or []
-                    except Exception: res[k] = []
-        except Exception as e:
-            print(f'[TJ] 并行失败: {e}')
-        for k in keys:
-            if k not in res:
-                try: res[k] = self._tj_one(k)
-                except Exception: res[k] = []
+        # _pmap：硬截止 8 秒，慢平台补空推荐，绝不串行重跑
+        res = self._pmap(
+            {k: (lambda kk=k: self._tj_one(kk)) for k in keys},
+            deadline=8.0, grace=3.0)
         groups = [{'key':m['key'], 'name':m['name'], 'icon':m['icon'], 'playlists':res.get(m['key']) or []}
                   for m in self.SRC_META]
         flat = []
@@ -1331,21 +1349,10 @@ class H(http.server.SimpleHTTPRequestHandler):
             return {'playlists': out, 'total': len(out), 'source': src, 'keyword': kw}
         keys = [m['key'] for m in self.SRC_META]
         per = max(6, min(limit, 15))
-        res = {}
-        try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            with ThreadPoolExecutor(max_workers=len(keys)) as ex:
-                futs = {ex.submit(self._playlists_one, k, kw, per): k for k in keys}
-                for f in as_completed(futs, timeout=18):
-                    k = futs[f]
-                    try: res[k] = f.result() or []
-                    except Exception: res[k] = []
-        except Exception as e:
-            print(f'[PLAYLISTS] 并行失败: {e}')
-        for k in keys:
-            if k not in res:
-                try: res[k] = self._playlists_one(k, kw, per)
-                except Exception: res[k] = []
+        # _pmap：硬截止 8 秒，慢平台补空歌单，绝不串行重跑
+        res = self._pmap(
+            {k: (lambda kk=k: self._playlists_one(kk, kw, per)) for k in keys},
+            deadline=8.0, grace=3.0)
         groups = []
         for m in self.SRC_META:
             groups.append({'key':m['key'], 'name':m['name'], 'icon':m['icon'],

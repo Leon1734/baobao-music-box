@@ -69,3 +69,6 @@ android/app/src/main/python/
 
 # screenshots are dev artifacts (18MB) - kept locally, not committed
 docs/screenshots/
+
+# 临时提交信息文件
+COMMIT_MSG*.txt

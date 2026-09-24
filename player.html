@@ -1055,7 +1055,7 @@ function savePersisted(){
     localStorage.setItem("mb_playlist",JSON.stringify(online));
     localStorage.setItem("mb_volume",au.volume);
     localStorage.setItem("mb_settings",JSON.stringify({shuffle:S.shuffle,repeat:S.repeat}));
-  }catch(e){}
+  }catch(e){console.error("[savePersisted] 保存失败（通常是 localStorage 满了）:",e)}  // 不吞：数据丢了必须留痕
 }
 function loadPersisted(){
   try{
@@ -1071,7 +1071,7 @@ function loadPersisted(){
       $("shB").style.color=S.shuffle?"var(--a)":"";
       $("rpB").style.color=S.repeat!="none"?"var(--a)":"";
     }
-  }catch(e){}
+  }catch(e){console.error("[loadPersisted] 恢复失败（mb_playlist 可能已损坏，已当空处理）:",e)}
 }
 
 // ====== 事件绑定 ======
@@ -1874,7 +1874,7 @@ function getStats(){
   return {songs:{},totalPlays:0,totalSec:0,daily:{}};
 }
 function saveStats(st){
-  try{localStorage.setItem(STATS_KEY,JSON.stringify(st))}catch(e){}
+  try{localStorage.setItem(STATS_KEY,JSON.stringify(st))}catch(e){console.error("[stats] 保存失败:",e)}
 }
 // 记一次播放（同一首歌 30 秒内重复调用只算一次，避免切歌抖动刷数据）
 let _lastRecKey="",_lastRecTs=0;
@@ -2861,7 +2861,7 @@ function toggleLike(song){
     list.unshift({id:song.id,name:song.name,artist:song.artist,album:song.album,duration:song.duration,source:song.source,likedAt:Date.now()});
     toast("已加入我喜欢 ❤");
   }
-  try{localStorage.setItem(LIKED_KEY,JSON.stringify(list))}catch(e){}
+  try{localStorage.setItem(LIKED_KEY,JSON.stringify(list))}catch(e){console.error("[liked] 保存失败:",e)}
   updateLikeBtn();
   renderLiked();
 }

@@ -17,7 +17,7 @@
 
 ### Windows：直接用 exe（推荐）
 
-1. 从 [Releases](../../releases) 下载 `baobao-music-box-v1.2.0-win64.exe`
+1. 从 [Releases](../../releases) 下载 `baobao-music-box-v1.2.1-win64.exe`
 2. 双击运行 —— 直接弹出**原生播放器窗口**（Edge WebView2 内核，不是浏览器标签页；无边框自绘标题栏，与整体同色）
 3. 关掉窗口即退出
 
@@ -26,7 +26,7 @@
 
 ### Android：装 APK
 
-从 Releases 下载 `baobao-music-box-v1.2.0-android.apk`，在手机上点开安装
+从 Releases 下载 `baobao-music-box-v1.2.1-android.apk`，在手机上点开安装
 （需要允许「安装未知来源应用」）。
 
 > 安卓版把同一份 `server.py` 用 [Chaquopy](https://chaquo.com/chaquopy/) 跑在 APK 里，
