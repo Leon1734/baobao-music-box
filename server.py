@@ -297,52 +297,69 @@ class H(http.server.SimpleHTTPRequestHandler):
         为什么需要：实测榜单 4 平台里有 1 个慢，8 秒才回来 8111ms —— 可第 3 秒时
         另外 3 个平台已经给完了。干等慢源毫无意义，宁可先出界面。
 
-        ⚠️ 为什么不能用 as_completed(timeout=...) + 「串行兜底」这套老写法：
+        ⚠️ 为什么用裸 threading.Thread 而不是 concurrent.futures：
+          `concurrent.futures.thread` 在 import 时 `atexit.register(_python_exit)`，
+          解释器一开始退出就把全局 `_shutdown` 置真，之后**任何** `submit()` 都抛
+          "cannot schedule new futures after interpreter shutdown"。
+          而本项目的 webview 窗口一关 → main() 返回 → sys.exit() 触发 atexit，
+          但自愈循环的非 daemon 服务线程还活着继续接请求 —— 于是线上表现就是
+          「页面能打开，但搜索/榜单/推荐/歌单全部瞬间返回空」。
+          裸线程没有 atexit 耦合，不受解释器退出影响。
+
+        ⚠️ 为什么也不能用 as_completed(timeout=...) + 「串行兜底」那套老写法：
           ① as_completed 超时抛 TimeoutError，直接中断收集循环；
           ② 后面的 `for k not in res: 串行重跑` 会把慢平台一个个**同步**再来一遍，
              最坏 18s + 4×15s = 78 秒 —— 用户看到的是"搜索卡了一分多钟"；
-          ③ `with ThreadPoolExecutor(...)` 异常退出时 __exit__ 走 shutdown(wait=True)，
-             还要等所有线程跑完才真正返回。
-        改法：wait(短超时) 轮询 + 硬截止时间。超时的直接补空——宁可少给结果，
-        也不能让界面卡住。shutdown(wait=False, cancel_futures=True) 收尾不等残留。
+          ③ `with ThreadPoolExecutor(...)` 异常退出时还要等所有线程跑完才返回。
         """
         keys = list(fn_map)
         if not keys:
             return {}
-        if len(keys) == 1:                      # 单平台不值得开线程池
+        if len(keys) == 1:                      # 单平台不值得开线程
             k = keys[0]
             try:
                 return {k: fn_map[k]() or []}
-            except Exception:
+            except Exception as e:
+                print(f'[PMAP] {k} 异常: {e}')
                 return {k: []}
-        from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
-        ex = ThreadPoolExecutor(max_workers=min(len(keys), 8))
-        try:
-            futs = {ex.submit(fn_map[k]): k for k in keys}
-            pending = set(futs)
-            res = {}
-            t0 = time.time()
-            end = t0 + deadline
-            while pending:
-                done, pending = wait(pending, timeout=0.2,
-                                     return_when=FIRST_COMPLETED)
-                for f in done:
-                    k = futs[f]
-                    try:
-                        res[k] = f.result() or []
-                    except Exception as e:
-                        print(f'[PMAP] {k} 异常: {e}')
-                        res[k] = []
-                now = time.time()
-                if now > end:
-                    break                        # ← 硬截止，不等慢源
-                if grace and (now - t0) > grace and any(res.values()):
-                    break                        # ← 宽限期到，已有结果就先走
-            for k in keys:
-                res.setdefault(k, [])
-            return res
-        finally:
-            ex.shutdown(wait=False, cancel_futures=True)
+
+        res = {}
+        lock = threading.Lock()
+        remaining = [len(keys)]
+
+        def _run(k):
+            try:
+                v = fn_map[k]() or []
+            except Exception as e:
+                print(f'[PMAP] {k} 异常: {e}')
+                v = []
+            with lock:
+                res[k] = v
+                remaining[0] -= 1
+
+        for k in keys:
+            # daemon=True：解释器要退出时不会被这些线程卡住
+            threading.Thread(target=_run, args=(k,), daemon=True,
+                             name=f'pmap-{k}').start()
+
+        t0 = time.time()
+        end = t0 + deadline
+        while True:
+            with lock:
+                done_all = remaining[0] <= 0
+                got_any = any(res.values())
+            if done_all:
+                break
+            now = time.time()
+            if now > end:
+                break                            # ← 硬截止，不等慢源
+            if grace and (now - t0) > grace and got_any:
+                break                            # ← 宽限期到，已有结果就先走
+            time.sleep(0.05)
+
+        for k in keys:
+            res.setdefault(k, [])
+        return res
 
     def _get(self, url, headers=None, timeout=15, retries=2):
         """GET 取 JSON。带重试 —— 本机 DNS/网络会瞬时抖动
@@ -1565,7 +1582,11 @@ def serve():
     # 服务线程 + 主线程守护：子线程无论因何退出（异常/端口被占/未知错误），
     # 主线程都能把它重新拉起，进程永不静默死掉
     while True:
-        _t = threading.Thread(target=_serve_worker, daemon=False)
+        # ⚠️ 必须 daemon=True：老写法是 daemon=False，导致 webview 窗口一关、
+        #   main() 返回触发 atexit 后，Python 还在等这个非 daemon 线程 → 进程变僵尸
+        #   继续监听端口，但 concurrent.futures 已被 atexit 置为 _shutdown，
+        #   于是所有并发接口瞬间返回空（现象就是"页面能开，但搜不到歌、看不到榜单"）。
+        _t = threading.Thread(target=_serve_worker, daemon=True)
         _t.start()
         try:
             _t.join()

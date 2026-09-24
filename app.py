@@ -336,6 +336,9 @@ def main():
 
     # 后台线程起服务（pywebview 的 start() 必须占用主线程）
     threading.Thread(target=server.serve, daemon=True, name="mb-server").start()
+    # ⚠️ mb-server 是 daemon，但 server.serve 内部还会拉起服务线程。
+    #   窗口一关 main() 就返回 → sys.exit() 触发 atexit → 整个解释器进入关闭流程。
+    #   所以「关闭窗口 = 退出进程」这条必须成立，不能让服务线程把进程吊着变僵尸。
 
     if not _wait_ready(port, timeout=60):
         detail = (f"服务没能在 60 秒内启动（端口 {port}）。\n\n"
