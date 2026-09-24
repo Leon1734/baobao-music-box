@@ -34,8 +34,7 @@ body{font-family:'Microsoft YaHei','PingFang SC',sans-serif;background:linear-gr
 .winBtn{width:52px;border:0;background:rgba(255,255,255,.06);color:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;border-radius:0;border-left:1px solid rgba(255,255,255,.06)}
 .winBtn:hover{background:rgba(255,255,255,.18);color:#fff}
 .winBtn.closeWin:hover{background:#e81123;color:#fff}
-body.isBrowser .winBar{display:none}
-body.isBrowser .app{padding-top:15px}
+body.isBrowser .winBtn{display:none}   /* 只藏按钮，标题栏与拖拽区保留：无边框窗口绝不能没有控制按钮 */
 .app{max-width:1400px;margin:0 auto;padding:42px 15px 15px;display:grid;grid-template-columns:minmax(0,1fr) 372px;gap:20px;height:100vh}
 .hdr{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;padding:8px 0;flex-shrink:0}
 .logo{display:flex;align-items:center;gap:12px}
@@ -2929,19 +2928,21 @@ function bindWinBar(){
   if(da&&!da.__wb){da.__wb=1;da.ondblclick=()=>{const b=$("winMax");if(b)b.click()}}
 }
 function detectBrowserMode(){
-  // ⚠️ 别只靠「window.pywebview 有没有」来判断 —— pywebview 的桥是**异步注入**的，
-  //   页面 init() 跑完时它可能还没到位，于是被误判成浏览器模式 → .winBar 整条
-  //   display:none → 无边框窗口变成"没有标题栏也没有按钮、拖不动也关不掉"。
-  //   改成认 pywebview 自己派发的 pywebviewready 事件：这个事件只在真宿主里才有。
-  //   3 秒还没等到才判为浏览器，宁可晚隐藏也不误隐藏。
-  let settled=false;
-  const show=()=>{settled=true;document.body.classList.remove("isBrowser")};
-  const hide=()=>{if(!settled){settled=true;document.body.classList.add("isBrowser")}};
-  document.addEventListener("pywebviewready",show);
-  window.addEventListener("pywebviewready",show);
-  // 部分版本事件已发过/不派发，兜底：桥对象就绪也算
-  const poll=setInterval(()=>{if(window.pywebview&&window.pywebview.api){clearInterval(poll);show()}},150);
-  setTimeout(()=>{clearInterval(poll);if(window.pywebview&&window.pywebview.api)show();else hide()},3000);
+  // ⚠️⚠️ 无边框窗口**必须**有标题栏按钮，否则用户没法移动/最小化/关闭窗口。
+  //   老逻辑按「window.pywebview 在不在」自动隐藏 .winBar —— pywebview 的桥是
+  //   **异步注入**的，一旦判定时序不巧就被误判成浏览器模式 → .winBar 整条
+  //   display:none → 变成"拖不动、也没有按钮"，用户完全没法操作窗口。
+  //   这个代价太大，而"浏览器里多一条无用标题栏"只是轻微观感问题。
+  //   所以：**默认永远显示**，只有确定是真浏览器（10 秒后桥仍然没到位）才隐藏。
+  //   10 秒足够 pywebview 把桥注进任何版本的 WebView2；真浏览器才会等满。
+  const bridgeUp = () => !!(window.pywebview && window.pywebview.api);
+  const hide = () => { if (!bridgeUp()) document.body.classList.add("isBrowser"); };
+  const show = () => document.body.classList.remove("isBrowser");
+  // 桥一到就立刻确保显示（覆盖任何误判）
+  document.addEventListener("pywebviewready", show);
+  window.addEventListener("pywebviewready", show);
+  const poll = setInterval(() => { if (bridgeUp()) { clearInterval(poll); show(); } }, 200);
+  setTimeout(() => { clearInterval(poll); hide(); }, 10000);
 }
 
 function bindFsControls(){
