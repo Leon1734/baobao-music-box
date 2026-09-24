@@ -29,10 +29,10 @@ body{font-family:'Microsoft YaHei','PingFang SC',sans-serif;background:linear-gr
    系统标题栏已被 frameless=True 去掉（那条灰白边框和暗色设计不搭），
    这里给 .app 留出顶部 42px，放一条透明的窗口条：左边整条是拖拽区，右边三个窗口按钮。
    刻意不设 background/border —— 直接透出页面底色，与整体连成一片。 */
-.winBar{position:fixed;top:0;left:0;right:0;height:42px;display:flex;align-items:stretch;z-index:900;background:transparent}
-.winBar .dragArea{flex:1;min-width:40px}
-.winBtn{width:46px;border:0;background:transparent;color:var(--t2);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;border-radius:0}
-.winBtn:hover{background:var(--hv);color:var(--t)}
+.winBar{position:fixed;top:0;left:0;right:0;height:42px;display:flex;align-items:stretch;z-index:900;background:rgba(15,15,22,.92);border-bottom:1px solid rgba(255,255,255,.07)}
+.winBar .dragArea{flex:1;min-width:40px;-webkit-app-region:drag;cursor:move}
+.winBtn{width:52px;border:0;background:rgba(255,255,255,.06);color:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;border-radius:0;border-left:1px solid rgba(255,255,255,.06)}
+.winBtn:hover{background:rgba(255,255,255,.18);color:#fff}
 .winBtn.closeWin:hover{background:#e81123;color:#fff}
 body.isBrowser .winBar{display:none}
 body.isBrowser .app{padding-top:15px}
@@ -2929,8 +2929,19 @@ function bindWinBar(){
   if(da&&!da.__wb){da.__wb=1;da.ondblclick=()=>{const b=$("winMax");if(b)b.click()}}
 }
 function detectBrowserMode(){
-  // pywebview 注入 window.pywebview 有一小段延迟，等一会儿再判断
-  setTimeout(()=>{if(!window.pywebview)document.body.classList.add("isBrowser")},1500);
+  // ⚠️ 别只靠「window.pywebview 有没有」来判断 —— pywebview 的桥是**异步注入**的，
+  //   页面 init() 跑完时它可能还没到位，于是被误判成浏览器模式 → .winBar 整条
+  //   display:none → 无边框窗口变成"没有标题栏也没有按钮、拖不动也关不掉"。
+  //   改成认 pywebview 自己派发的 pywebviewready 事件：这个事件只在真宿主里才有。
+  //   3 秒还没等到才判为浏览器，宁可晚隐藏也不误隐藏。
+  let settled=false;
+  const show=()=>{settled=true;document.body.classList.remove("isBrowser")};
+  const hide=()=>{if(!settled){settled=true;document.body.classList.add("isBrowser")}};
+  document.addEventListener("pywebviewready",show);
+  window.addEventListener("pywebviewready",show);
+  // 部分版本事件已发过/不派发，兜底：桥对象就绪也算
+  const poll=setInterval(()=>{if(window.pywebview&&window.pywebview.api){clearInterval(poll);show()}},150);
+  setTimeout(()=>{clearInterval(poll);if(window.pywebview&&window.pywebview.api)show();else hide()},3000);
 }
 
 function bindFsControls(){
