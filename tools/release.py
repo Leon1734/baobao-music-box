@@ -10,13 +10,13 @@ token 从 git credential 取，只在本进程内使用，绝不打印或落盘�
 import subprocess, json, ssl, os, sys, mimetypes, urllib.request, urllib.error
 
 REPO = "Leon1734/baobao-music-box"
-TAG = "v1.2.1"
-NAME = "宝宝音乐盒 v1.2.1 · 性能修复：搜索最坏 78 秒 → <8 秒"
+TAG = "v1.2.2"
+NAME = "宝宝音乐盒 v1.2.2 · 修复：在线功能全部返回空"
 EXE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "dist", "宝宝音乐盒.exe")
-ASSET_NAME = "baobao-music-box-v1.2.1-win64.exe"   # 必须 ASCII，中文名会被 GitHub 吞掉
+ASSET_NAME = "baobao-music-box-v1.2.2-win64.exe"   # 必须 ASCII，中文名会被 GitHub 吞掉
 
-NOTES = """## 宝宝音乐盒 v1.2.1
+NOTES = """## 宝宝音乐盒 v1.2.2
 
 ### ⚡ 性能修复（本次重点）
 
@@ -55,7 +55,7 @@ NOTES = """## 宝宝音乐盒 v1.2.1
 ### 📦 下载
 | 平台 | 文件 |
 |------|------|
-| Windows | `baobao-music-box-v1.2.1-win64.exe`（免安装单文件，双击即用，照片/音源/壁纸全内置）|
+| Windows | `baobao-music-box-v1.2.2-win64.exe`（免安装单文件，双击即用，照片/音源/壁纸全内置）|
 | Android | `baobao-music-box-v1.2.1-android.apk`（侧载安装，Android 7.0+）|
 
 > 不含任何第三方凭据；320k 播放不校验密钥，功能无损失。
