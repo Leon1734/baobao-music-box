@@ -65,7 +65,7 @@
 
 | 平台 | 下载 | 说明 |
 |------|------|------|
-| **Windows** | [`baobao-music-box-v1.3.0-win64.exe`](../../releases) | 双击即用，免安装免 Python，约 130 MB（**内含 Node 运行时**，在线播放开箱可用） |
+| **Windows** | [`baobao-music-box-v1.3.0-win64.exe`](../../releases) | 双击即用，免安装免 Python，约 54 MB（**内含 Node 运行时**，在线播放开箱可用） |
 | **Android** | [`baobao-music-box-v1.3.0-android.apk`](../../releases) | 侧载安装，Android 7.0+ |
 | **源码** | `python app.py` | 需要 Python 3.8+ |
 
