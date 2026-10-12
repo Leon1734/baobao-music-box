@@ -100,15 +100,33 @@ def main():
     H = {"Authorization": "Bearer " + tk, "Accept": "application/vnd.github+json",
          "User-Agent": "mb-release", "X-GitHub-Api-Version": "2022-11-28"}
 
-    def call(url, method="GET", data=None, headers=None):
+    def call(url, method="GET", data=None, headers=None, retries=3):
+        """带退避重试的 API 调用。
+        ⚠ 实测：CI 与本地脚本并发操作同一个 Release 时，GitHub 会返回瞬时 500
+          （曾导致补标题的 PATCH 直接抛异常、整个发版流程崩掉）。5xx 一律退避重试。"""
+        import time as _t
         h = dict(H)
         if headers:
             h.update(headers)
-        req = urllib.request.Request("https://api.github.com" + url, data=data,
-                                     headers=h, method=method)
-        with urllib.request.urlopen(req, timeout=120, context=ctx) as r:
-            body = r.read()
-            return r.status, (json.loads(body) if body else {})
+        last = None
+        for attempt in range(retries):
+            req = urllib.request.Request("https://api.github.com" + url, data=data,
+                                         headers=h, method=method)
+            try:
+                with urllib.request.urlopen(req, timeout=120, context=ctx) as r:
+                    body = r.read()
+                    return r.status, (json.loads(body) if body else {})
+            except urllib.error.HTTPError as e:
+                if e.code >= 500 and attempt < retries - 1:
+                    wait = 2 * (attempt + 1)
+                    print(f"  [retry] HTTP {e.code}（{method} {url[:50]}），{wait}s 后重试…")
+                    _t.sleep(wait); last = e; continue
+                raise
+            except Exception as e:
+                if attempt < retries - 1:
+                    _t.sleep(2 * (attempt + 1)); last = e; continue
+                raise
+        raise last if last else RuntimeError(f"API 调用失败: {method} {url}")
 
     # 1) 找/建 Release
     try:
@@ -130,11 +148,17 @@ def main():
         if (rel.get("name") or "").strip() in ("", TAG, TAG.lstrip("v")):
             patch["name"] = NAME
         if patch:
-            call(f"/repos/{REPO}/releases/{rid}", "PATCH",
-                 json.dumps(patch).encode(),
-                 {"Content-Type": "application/json"})
-            print(f"✅ 已补上 {'发布说明' if 'body' in patch else ''}"
-                  f"{' + ' if len(patch) > 1 else ''}{'标题' if 'name' in patch else ''}")
+            # 补标题/说明是**非关键路径**：失败也不能中断主流程（上传 exe 才是关键），
+            # 否则一次瞬时 500 就把整个发版打断（实测踩过）。
+            try:
+                call(f"/repos/{REPO}/releases/{rid}", "PATCH",
+                     json.dumps(patch).encode(),
+                     {"Content-Type": "application/json"})
+                print(f"✅ 已补上 {'发布说明' if 'body' in patch else ''}"
+                      f"{' + ' if len(patch) > 1 else ''}{'标题' if 'name' in patch else ''}")
+            except Exception as e:
+                print(f"⚠️ 补标题/说明失败（不影响上传；稍后重跑本脚本即可补上）: "
+                      f"{type(e).__name__}")
         else:
             print("⏭ 已有发布说明与标题，保持不动")
     else:
