@@ -4505,15 +4505,28 @@ function bindDragDrop(){
        </div>`);
   }
   // 服务可达性：挂了就明确告诉用户，别让人对着转圈猜
-  checkServerAlive().then(ok=>{
-    if(!ok){
-      document.body.insertAdjacentHTML("afterbegin",
-        `<div style="position:fixed;top:0;left:0;right:0;z-index:99998;background:#8a6d00;color:#fff;padding:12px 18px;font-size:13px;font-family:system-ui">
-         本地服务未响应：搜索/歌词/在线播放会不可用。请运行「启动音乐盒.bat」后刷新页面。
+  // ⚠️ 文案要分环境：原生窗口（exe / python app.py）里说「运行启动音乐盒.bat」是错误指引。
+  //    exe 用户的正确做法是「关闭窗口重新双击」（服务随窗口进程一起退出）。
+  window.__showSrvDown = function(){
+    if(document.getElementById("srvDownBar")) return;
+    const isApp = !!(window.pywebview);          // 原生窗口才有 pywebview
+    const hint = isApp
+      ? '本地服务已断开：搜索/歌词/在线播放会不可用。<b>请关闭本窗口，重新双击打开</b>（服务随窗口一起重启）。'
+      : '本地服务未响应：搜索/歌词/在线播放会不可用。请运行「启动音乐盒.bat」后刷新页面。';
+    document.body.insertAdjacentHTML("afterbegin",
+      `<div id="srvDownBar" style="position:fixed;top:0;left:0;right:0;z-index:99998;background:#8a6d00;color:#fff;padding:12px 18px;font-size:13px;font-family:system-ui">
+         ${hint}
          <button onclick="location.reload()" style="margin-left:12px;padding:4px 12px;border:none;border-radius:6px;cursor:pointer;background:#fff;color:#8a6d00;font-weight:600">刷新</button>
          </div>`);
-    }
-  });
+  };
+  checkServerAlive().then(ok=>{ if(!ok) window.__showSrvDown(); });
+  // 自愈：每 5 秒探测一次 —— 服务恢复（比如重启成功）就自动撤掉警告条，不用用户手动刷新
+  setInterval(async ()=>{
+    const bar = document.getElementById("srvDownBar");
+    const ok = await checkServerAlive();
+    if(!ok && !bar) window.__showSrvDown();
+    else if(ok && bar) bar.remove();
+  }, 5000);
 })();
 </script>
 </body>

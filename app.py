@@ -309,15 +309,6 @@ def main():
             _msgbox(APP_TITLE, HELP_TEXT)
         return 0
 
-    # 已经有实例在跑？直接把界面打开到它，不再起第二个
-    if not args.port and not os.environ.get('MB_PORT'):
-        rp, rh = _find_running_instance()
-        if rp:
-            _log(f"[提示] 宝宝音乐盒已经在运行了（端口 {rp}），直接打开它。")
-            _log(f"       它的数据目录：{(rh or {}).get('data_dir')}")
-            _open_ui(rp, use_browser=args.browser, block=False)
-            return 0
-
     try:
         import server
     except Exception:
@@ -325,6 +316,25 @@ def main():
         traceback.print_exc()
         _msgbox(APP_TITLE, "无法加载服务模块 server.py：\n\n" + traceback.format_exc()[-1200:])
         return 1
+
+    # 已经有实例在跑？
+    #   · 数据目录相同 → 是同一份拷贝被双击两次，复用（把界面开到它）
+    #   · 数据目录不同 → 是同机的另一份拷贝（如 dist/ 与 release_pkg/ 两份 exe）。
+    #     复用会让用户看到**别人的库**（照片/音源/缓存都不同），而且一旦那个实例
+    #     先退出，本窗口就成了「服务已断开的孤儿窗口」。所以这种情况自己起服务
+    #     （端口被占会自动往上找），互不干扰。
+    if not args.port and not os.environ.get('MB_PORT'):
+        rp, rh = _find_running_instance()
+        if rp:
+            other = os.path.normcase(str((rh or {}).get('data_dir', '') or ''))
+            mine = os.path.normcase(str(server.DATA_DIR))
+            if other and other != mine:
+                _log(f"[提示] 端口 {rp} 上是另一份拷贝（数据目录 {other}），")
+                _log(f"       本实例将另起服务，使用自己的数据目录：{mine}")
+            else:
+                _log(f"[提示] 宝宝音乐盒已经在运行了（端口 {rp}），直接打开它。")
+                _open_ui(rp, use_browser=args.browser, block=False)
+                return 0
 
     # 端口优先级：命令行 --port > 环境变量 MB_PORT > 自动挑（8082 起）
     port = args.port or int(os.environ.get('MB_PORT', 0)) or _pick_port(8082)

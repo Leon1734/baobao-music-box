@@ -9,7 +9,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Android-lightgrey)
-![Release](https://img.shields.io/badge/Release-v1.3.0-informational)
+![Release](https://img.shields.io/badge/Release-v1.3.1-informational)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 [⬇️ 下载](#-下载与安装) · [🖼 界面](#-界面一览) · [✨ 功能](#-功能) · [⌨️ 快捷键](#️-快捷键) · [🔧 开发](#-开发)
@@ -65,8 +65,8 @@
 
 | 平台 | 下载 | 说明 |
 |------|------|------|
-| **Windows** | [`baobao-music-box-v1.3.0-win64.exe`](../../releases) | 双击即用，免安装免 Python，约 54 MB（**内含 Node 运行时**，在线播放开箱可用） |
-| **Android** | [`baobao-music-box-v1.3.0-android.apk`](../../releases) | 侧载安装，Android 7.0+ |
+| **Windows** | [`baobao-music-box-v1.3.1-win64.exe`](../../releases) | 双击即用，免安装免 Python，约 54 MB（**内含 Node 运行时**，在线播放开箱可用） |
+| **Android** | [`baobao-music-box-v1.3.1-android.apk`](../../releases) | 侧载安装，Android 7.0+ |
 | **源码** | `python app.py` | 需要 Python 3.8+ |
 
 ### 🪟 Windows
