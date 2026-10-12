@@ -69,25 +69,32 @@ exe 现在**内置 Node 运行时**（+22MB），拿到 exe 的人**不需要装
 
 
 def token():
-    # ⚠ 实测坑：Hermes 自带 git（%LOCALAPPDATA%/hermes/tools/git-*）的
-    #   credential.helper=helper-selector 会**挂起**（无输出、不返回）→ 整个推送/上传卡死。
-    #   系统 Git（D:\Programs\Git）用 manager 助手，秒回。所以按顺序试，每个给 25s 超时。
+    # ⚠ 两个实测坑：
+    #   1. Hermes 自带 git（%LOCALAPPDATA%/hermes/tools/git-*）的
+    #      credential.helper=helper-selector 会**挂起**（无输出、不返回）；
+    #      系统 Git（D:\Programs\Git，helper=manager）秒回。
+    #   2. **绝不能用 shell=True + printf 管道**：Windows 下 shell=True 走 cmd.exe，
+    #      而 printf/单引号是 bash 语法 → 输入格式错 → git credential fill 全部挂起
+    #      （表现为每个候选干等 25s）。必须用 Python 直接把 stdin 喂给子进程。
     import os as _os
-    cands = ["git"]
+    # 系统 Git 放最前（0.6s 秒回）；"git" 放最后（Hermes 自带那个会挂 25s）
+    cands = []
     for p in (r"D:\Programs\Git\cmd\git.exe",
               _os.path.expandvars(r"%ProgramFiles%\Git\cmd\git.exe"),
               _os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\cmd\git.exe")):
         if _os.path.exists(p) and p not in cands:
             cands.append(p)
+    cands.append("git")
+    stdin_data = "protocol=https\nhost=github.com\n\n"
     for exe in cands:
         try:
-            p = subprocess.run(
-                f'printf \'protocol=https\\nhost=github.com\\n\\n\' | "{exe}" credential fill',
-                shell=True, capture_output=True, text=True, timeout=25)
+            p = subprocess.run([exe, "credential", "fill"], input=stdin_data,
+                               capture_output=True, text=True, timeout=25)
             for line in p.stdout.splitlines():
                 if line.startswith("password=") and len(line) > 12:
                     print(f"  [token] 凭据来自: {exe}")
                     return line.split("=", 1)[1].strip()
+            print(f"  [token] {exe} 未返回凭据，换下一个…")
         except subprocess.TimeoutExpired:
             print(f"  [token] {exe} 25s 无响应（凭据助手挂起），换下一个…")
             continue
