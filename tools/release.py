@@ -139,13 +139,20 @@ def main():
         print(f"✅ Release {TAG} 已存在（id={rid}），当前附件 {len(rel.get('assets', []))} 个")
         # ⚠️ CI（softprops/action-gh-release）建的 Release 是没有说明文字的，
         # 这里补上，否则 Release 页面上什么都没有。
+        # 同理标题也只会是裸 tag（"v1.3.0"），一并补成完整标题。
+        patch = {}
         if not (rel.get("body") or "").strip():
+            patch["body"] = NOTES
+        if (rel.get("name") or "").strip() in ("", TAG, TAG.lstrip("v")):
+            patch["name"] = NAME
+        if patch:
             call(f"/repos/{REPO}/releases/{rid}", "PATCH",
-                 json.dumps({"body": NOTES}).encode(),
+                 json.dumps(patch).encode(),
                  {"Content-Type": "application/json"})
-            print("✅ 已补上发布说明（原 Release 的 body 为空）")
+            print(f"✅ 已补上 {'发布说明' if 'body' in patch else ''}"
+                  f"{' + ' if len(patch) > 1 else ''}{'标题' if 'name' in patch else ''}")
         else:
-            print("⏭ 已有发布说明，保持不动")
+            print("⏭ 已有发布说明与标题，保持不动")
     else:
         payload = json.dumps({"tag_name": TAG, "name": NAME,
                               "body": NOTES, "draft": False, "prerelease": False}).encode()
