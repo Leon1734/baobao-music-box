@@ -69,12 +69,31 @@ exe 现在**内置 Node 运行时**（+22MB），拿到 exe 的人**不需要装
 
 
 def token():
-    p = subprocess.run(
-        "printf 'protocol=https\\nhost=github.com\\n\\n' | git credential fill",
-        shell=True, capture_output=True, text=True)
-    for line in p.stdout.splitlines():
-        if line.startswith("password="):
-            return line.split("=", 1)[1].strip()
+    # ⚠ 实测坑：Hermes 自带 git（%LOCALAPPDATA%/hermes/tools/git-*）的
+    #   credential.helper=helper-selector 会**挂起**（无输出、不返回）→ 整个推送/上传卡死。
+    #   系统 Git（D:\Programs\Git）用 manager 助手，秒回。所以按顺序试，每个给 25s 超时。
+    import os as _os
+    cands = ["git"]
+    for p in (r"D:\Programs\Git\cmd\git.exe",
+              _os.path.expandvars(r"%ProgramFiles%\Git\cmd\git.exe"),
+              _os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\cmd\git.exe")):
+        if _os.path.exists(p) and p not in cands:
+            cands.append(p)
+    for exe in cands:
+        try:
+            p = subprocess.run(
+                f'printf \'protocol=https\\nhost=github.com\\n\\n\' | "{exe}" credential fill',
+                shell=True, capture_output=True, text=True, timeout=25)
+            for line in p.stdout.splitlines():
+                if line.startswith("password=") and len(line) > 12:
+                    print(f"  [token] 凭据来自: {exe}")
+                    return line.split("=", 1)[1].strip()
+        except subprocess.TimeoutExpired:
+            print(f"  [token] {exe} 25s 无响应（凭据助手挂起），换下一个…")
+            continue
+        except Exception as e:
+            print(f"  [token] {exe} 失败: {type(e).__name__}")
+            continue
     return ""
 
 

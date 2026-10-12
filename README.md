@@ -285,8 +285,19 @@ android/               安卓工程（Chaquopy 复用 server.py）
 
 ### 发版
 
+**一键发版（推荐）** —— 每次升级后必须产出对应版本的免安装 exe：
+
 ```bash
-python tools/release.py            # 建 GitHub Release + 上传本地构建的 exe
+python tools/release_all.py            # 构建 exe + 同步 release_pkg（自动清旧版本目录）
+python tools/release_all.py --upload   # 构建 + 同步 + 上传 GitHub Release
+python tools/release_all.py --no-node  # 不打 Node 运行时（exe 小 ~22MB，但免安装环境不能在线播放）
+```
+
+分步（需要细粒度控制时）：
+
+```bash
+python build_exe.py                # 只构建 dist/宝宝音乐盒.exe
+python tools/release.py            # 只建 GitHub Release + 上传本地构建的 exe
 ```
 
 > **exe 必须本地构建上传** —— CI 拿不到 `photos_web/`、`音源/`（不入库），
