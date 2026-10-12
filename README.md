@@ -3,13 +3,13 @@
 # 宝宝音乐盒 · Baobao Music Box
 
 **一个本地运行的家庭音乐播放器**
-本地音乐 + 四平台在线搜索 + 宝宝照片轮播 + 儿歌专区
+本地音乐 + 五平台在线搜索（自带洛雪音源引擎）+ 宝宝照片轮播 + 儿歌专区
 
 *不需要注册、不需要账号、不上传任何数据 —— 所有东西都在你自己的电脑里。*
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Android-lightgrey)
-![Release](https://img.shields.io/badge/Release-v1.2.3-informational)
+![Release](https://img.shields.io/badge/Release-v1.3.0-informational)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 [⬇️ 下载](#-下载与安装) · [🖼 界面](#-界面一览) · [✨ 功能](#-功能) · [⌨️ 快捷键](#️-快捷键) · [🔧 开发](#-开发)
@@ -29,7 +29,9 @@
 
 | | |
 |---|---|
-| 🎵 **四平台聚合** | 酷我 / 网易云 / QQ / 酷狗 —— 哪个平台播不了，自动跨源换源兜底 |
+| 🎵 **五平台聚合** | 酷我 / 网易云 / QQ / 酷狗 / 咪咕 —— 哪个平台播不了，自动跨源换源兜底 |
+| 🎧 **本地洛雪音源引擎** | 内置 Node 运行时，直接执行洛雪音源 JS（星海/长青/K×H 多源竞速），**免安装 exe 也能在线播放** |
+| 🔍 **搜索联想 + 热搜** | 输入即提示（QQ+网易双源）；热搜词三平台聚合（酷我+QQ+网易） |
 | 👶 **宝宝元素** | 首页照片轮播 + 儿童乐园（儿歌专区）+ 播放页相册 |
 | 🔒 **完全本地** | 服务只监听 `127.0.0.1`，照片、歌单、统计全在本机，不联网上传 |
 | 📦 **开箱即用** | 单个 exe 双击就跑，照片和音源都已打包进去，转发给家人即可 |
@@ -41,7 +43,7 @@
 <table>
 <tr>
 <td width="50%"><img src="docs/images/01-home.png" alt="首页"/><br/><sub><b>首页</b> · 宝宝相册轮播 + 儿歌快捷入口</sub></td>
-<td width="50%"><img src="docs/images/02-search.png" alt="在线搜索"/><br/><sub><b>在线搜索</b> · 四平台聚合检索</sub></td>
+<td width="50%"><img src="docs/images/02-search.png" alt="在线搜索"/><br/><sub><b>在线搜索</b> · 五平台聚合检索 + 联想</sub></td>
 </tr>
 <tr>
 <td width="50%"><img src="docs/images/03-boards.png" alt="排行榜"/><br/><sub><b>排行榜</b> · 137 个榜单，按平台 Tab 切换</sub></td>
@@ -63,8 +65,8 @@
 
 | 平台 | 下载 | 说明 |
 |------|------|------|
-| **Windows** | [`baobao-music-box-v1.2.3-win64.exe`](../../releases) | 双击即用，免安装免 Python，约 32 MB |
-| **Android** | [`baobao-music-box-v1.2.3-android.apk`](../../releases) | 侧载安装，Android 7.0+ |
+| **Windows** | [`baobao-music-box-v1.3.0-win64.exe`](../../releases) | 双击即用，免安装免 Python，约 130 MB（**内含 Node 运行时**，在线播放开箱可用） |
+| **Android** | [`baobao-music-box-v1.3.0-android.apk`](../../releases) | 侧载安装，Android 7.0+ |
 | **源码** | `python app.py` | 需要 Python 3.8+ |
 
 ### 🪟 Windows
@@ -103,7 +105,8 @@ Windows 用户也可以双击 `启动音乐盒.bat` / `停止音乐盒.bat`。
 <tr><td width="50%" valign="top">
 
 **🎵 多音源**
-- 酷我 / 网易云 / QQ / 酷狗四平台搜索与播放
+- 酷我 / 网易云 / QQ / 酷狗 / **咪咕**五平台搜索与播放
+- 本地洛雪音源引擎（星海/长青/K×H 多源竞速 + 可播性验证）
 - 播不了自动**跨源换源**兜底
 - 取链接三级降级：音源 API → 酷我直链 → 重试
 

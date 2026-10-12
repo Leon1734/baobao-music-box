@@ -67,6 +67,14 @@ body.isBrowser .winBtn{display:none}   /* 只藏按钮，标题栏与拖拽区�
 .hw{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
 .hw span{padding:4px 10px;background:rgba(255,255,255,.08);border-radius:12px;font-size:12px;cursor:pointer;color:var(--t2)}
 .hw span:hover{background:var(--p);color:#fff}
+/* 搜索联想面板（输入即提示，QQ+网易双源聚合） */
+.sgBox{position:relative}
+.sgBox:empty{display:none}
+.sgList{position:absolute;top:4px;left:0;right:0;z-index:120;max-height:320px;overflow-y:auto;background:var(--c2,#23293c);border:1px solid rgba(255,255,255,.12);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.45);overscroll-behavior:contain}
+.sgList .sgIt{display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:13px;color:var(--t,#e8eaf2);cursor:pointer}
+.sgList .sgIt .sgT{color:var(--t2,#9aa3b8);font-size:12px;margin-left:auto;flex-shrink:0}
+.sgList .sgIt:hover,.sgList .sgIt.on{background:rgba(255,255,255,.07)}
+.sgList .sgIt.on{color:var(--p)}
 .si{display:flex;align-items:center;gap:12px;padding:10px;border-radius:10px;cursor:pointer;transition:.2s}
 .si:hover{background:rgba(255,255,255,.08)}
 .si .cv{width:44px;height:44px;border-radius:8px;overflow:hidden;flex-shrink:0;position:relative}
@@ -138,6 +146,7 @@ body.isBrowser .winBtn{display:none}   /* 只藏按钮，标题栏与拖拽区�
 .src-wy{background:rgba(255,107,157,.2);color:var(--p)}
 .src-tx{background:rgba(64,158,255,.2);color:#409eff}
 .src-kg{background:rgba(255,159,64,.22);color:#ff9f40}
+.src-mg{background:rgba(0,201,167,.2);color:#00c9a7}
 .src-hyw{background:rgba(255,230,109,.2);color:var(--a)}
 .src-local{background:rgba(184,197,214,.2);color:var(--t2)}
 .bd-grp{margin-bottom:14px}
@@ -652,10 +661,11 @@ html[data-cover="0"] .si .cv{display:none}
     <div class="ct"><i class="fas fa-search"></i>在线搜索</div>
     <div class="sbox">
      <select id="sType"><option value="song">歌曲</option><option value="playlist">歌单</option></select>
-     <select id="src"><option value="all">🔍 全部平台</option><option value="kw">酷我音乐</option><option value="wy">网易云</option><option value="tx">QQ音乐</option><option value="kg">酷狗音乐</option></select>
-     <input id="sI" placeholder="搜索歌曲、歌手...">
+     <select id="src"><option value="all">🔍 全部平台</option><option value="kw">酷我音乐</option><option value="wy">网易云</option><option value="tx">QQ音乐</option><option value="kg">酷狗音乐</option><option value="mg">咪咕音乐</option></select>
+     <input id="sI" placeholder="搜索歌曲、歌手..." autocomplete="off">
      <button id="sB"><i class="fas fa-search"></i></button>
     </div>
+    <div class="sgBox" id="sgBox"></div>
     <div class="hw" id="sHot"></div>
     <div class="hw" id="sHist" style="display:none"></div>
     <div id="sR"><div class="emp"><i class="fas fa-music"></i> 输入关键词搜索在线音乐<br><small>LX音源驱动，高品质播放</small></div></div>
@@ -1077,6 +1087,7 @@ function loadPersisted(){
 function bindEvents(){
   bindFsControls();   // 全屏播放页的控制按钮
   bindWinBar();       // 无边框窗口的最小化/最大化/关闭
+  bindSuggest();      // 搜索联想（输入即提示）
   detectBrowserMode();// 浏览器里打开时隐藏窗口条
   // 标签切换
   document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{
@@ -1143,6 +1154,17 @@ function bindEvents(){
   au.onended=onSongEnd;
   au.onloadedmetadata=()=>{
     $("dT").textContent=fmtTime(au.duration);
+    // ⚠ 占位音频拦截：音源对 VIP 歌可能返回「此歌曲无法播放」提示音 ——
+    //   它是合法 MP3（ID3/时长全对），服务端只能按总长拦（<1MB），但部分占位音
+    //   超过 1MB 或服务端没验到。前端最后一道防线：在线歌时长 < 30s 且时长
+    //   与数据源严重不符 → 判占位，立即换链重试。
+    const cur0=S.pl[S.ci];
+    if(cur0&&cur0.source!=="local"&&au.duration&&au.duration<30){
+      console.warn(`[guard] 「${cur0.name}」实际时长 ${au.duration.toFixed(0)}s <30s，疑似占位音频，换链重试`);
+      au.pause();
+      retryPlay(cur0,_playSeq);
+      return;
+    }
     // 用实际音频时长修正播放列表显示（数据源时长可能不准）
     const cur=S.pl[S.ci];
     if(cur&&au.duration&&Math.abs((cur.duration||0)-au.duration)>3){
@@ -1234,6 +1256,53 @@ function goSlide(i){S.curSlide=i;updateSlide()}
 function updateSlide(){
   document.querySelectorAll("#car img").forEach((x,i)=>x.classList.toggle("active",i===S.curSlide));
   document.querySelectorAll("#car .cnav span").forEach((x,i)=>x.classList.toggle("active",i===S.curSlide));
+}
+
+// ====== 搜索联想（输入即提示；QQ+网易双源，/api/suggest）======
+let _sgTimer=null,_sgSeq=0;
+function hideSuggest(){const b=$("sgBox");if(b)b.innerHTML="";}
+async function _fetchSuggest(kw){
+  const my=++_sgSeq;
+  try{
+    const r=await fetch(A+"/api/suggest?kw="+encodeURIComponent(kw));
+    const d=await r.json();
+    if(my!==_sgSeq)return;              // 期间用户又输入了，丢弃过期响应
+    const words=(d.words||[]).slice(0,8);
+    const b=$("sgBox");if(!b)return;
+    if(!words.length){b.innerHTML="";return;}
+    b.innerHTML=`<div class="sgList">${words.map((w,i)=>
+      `<div class="sgIt" data-i="${i}"><i class="fas fa-magnifying-glass" style="font-size:11px;color:var(--t2)"></i><span class="sgW">${escH(w)}</span><span class="sgT">联想</span></div>`).join("")}</div>`;
+    b.querySelectorAll(".sgIt").forEach(el=>{
+      el.onmousedown=e=>{e.preventDefault();searchWord(words[parseInt(el.dataset.i)])};  // mousedown 先于 input blur
+    });
+  }catch(e){/* 联想失败静默：不打扰搜索 */}
+}
+function bindSuggest(){
+  const inp=$("sI");if(!inp||inp.__sgBound)return;
+  inp.__sgBound=1;
+  let active=-1;
+  const items=()=>[...document.querySelectorAll("#sgBox .sgIt")];
+  inp.addEventListener("input",()=>{
+    const v=inp.value.trim();
+    clearTimeout(_sgTimer);
+    if(v.length<1){hideSuggest();return;}
+    _sgTimer=setTimeout(()=>_fetchSuggest(v),280);   // 防抖 280ms
+  });
+  inp.addEventListener("keydown",e=>{
+    const its=items();
+    if(e.key==="ArrowDown"&&its.length){e.preventDefault();active=Math.min(active+1,its.length-1);}
+    else if(e.key==="ArrowUp"&&its.length){e.preventDefault();active=Math.max(active-1,0);}
+    else if(e.key==="Enter"){
+      if(active>=0&&its[active]){e.preventDefault();const w=its[active].querySelector(".sgW").textContent;hideSuggest();searchWord(w);return;}
+      hideSuggest();return;                            // 没选中项：正常提交搜索
+    }
+    else if(e.key==="Escape"){hideSuggest();active=-1;return;}
+    else return;
+    its.forEach((el,i)=>el.classList.toggle("on",i===active));
+    if(active>=0&&its[active])its[active].scrollIntoView({block:"nearest"});
+  });
+  inp.addEventListener("blur",()=>setTimeout(hideSuggest,120));   // 延迟关，留时间给 click
+  document.addEventListener("pointerdown",e=>{if(!e.target.closest("#sgBox"))hideSuggest()},true);
 }
 
 // ====== 热搜词 ======
@@ -1451,10 +1520,10 @@ async function doSearch(){
       S.searchTotal=d.total||0;
       S.searchHasMore=d.has_more!==false;
       S.searchResults=d.songs.slice();
-      const srcLbl={all:"全部平台",kw:"酷我音乐",wy:"网易云",tx:"QQ音乐",kg:"酷狗音乐"}[src]||src;
+      const srcLbl={all:"全部平台",kw:"酷我音乐",wy:"网易云",tx:"QQ音乐",kg:"酷狗音乐",mg:"咪咕音乐"}[src]||src;
       // 多源聚合时把各平台命中数摊开给用户看
       const cnt=d.counts||{};
-      const cntTxt=Object.keys(cnt).filter(k=>cnt[k]).map(k=>`${{kw:'酷我',wy:'网易',tx:'QQ',kg:'酷狗'}[k]||k} ${cnt[k]}`).join(" · ");
+      const cntTxt=Object.keys(cnt).filter(k=>cnt[k]).map(k=>`${{kw:'酷我',wy:'网易',tx:'QQ',kg:'酷狗',mg:'咪咕'}[k]||k} ${cnt[k]}`).join(" · ");
       $("sR").innerHTML=`<div class="search-hint"><i class="fas fa-check-circle"></i> 找到 ${d.total} 首 · 音源: ${srcLbl}${cntTxt?`<br><span style="font-size:11px;color:var(--t2)">各平台: ${cntTxt}</span>`:''}
         <button class="playAllBtn" data-playall="sR">▶ 播放全部</button></div>`;
       renderSongList(d.songs,"sR",true);
@@ -1597,8 +1666,8 @@ function renderSearchHistory(){
 // ====== 单行歌曲HTML（搜索/加载更多共用，避免重复实现不一致）======
 function songRowHTML(s,showActions){
   const idx=storeSong(s);
-  const srcClass={kw:"src-kw",wy:"src-wy",tx:"src-tx",kg:"src-kg",hyw:"src-hyw",local:"src-local"}[s.source]||"src-kw";
-  const srcName={kw:"酷我",wy:"网易",tx:"QQ",kg:"酷狗",hyw:"HYW",local:"本地"}[s.source]||s.source;
+  const srcClass={kw:"src-kw",wy:"src-wy",tx:"src-tx",kg:"src-kg",mg:"src-mg",hyw:"src-hyw",local:"src-local"}[s.source]||"src-kw";
+  const srcName={kw:"酷我",wy:"网易",tx:"QQ",kg:"酷狗",mg:"咪咕",hyw:"HYW",local:"本地"}[s.source]||s.source;
   const coverKey=`${s.source}_${s.id}`;
   return `<div class="si" data-idx="${idx}" data-action="play" data-cover="${escH(coverKey)}">
     <div class="cv" data-cv="${escH(coverKey)}"><div class="no"><i class="fas fa-music"></i></div></div>

@@ -39,6 +39,20 @@ BUNDLE_DIRS = [
     "音源",
     "wallpapers",     # 壁纸皮肤：设置页按 wallpapers/xxx.jpg 取图，不打进去选了壁纸会 404
 ]
+
+# ---- 在线播放必需：洛雪音源引擎（Node 脚本 + JS 运行时）----
+# 为什么不重写成 Python：音源 JS 自带加密/校验逻辑，重写不可行。
+# 所以把 node.exe 一并打进包 —— 免安装 exe 才能真的在线播放。
+BUNDLE_FILES = {
+    "tools/lx-daemon.js": "tools/",     # 常驻取链服务
+    "tools/lx-loader.js": "tools/",     # 洛雪源加载器
+}
+NODE_CANDIDATES = [
+    r"D:\Programs\nodejs\node.exe",
+    os.path.expandvars(r"%LOCALAPPDATA%\Programs\nodejs\node.exe"),
+    r"C:\Program Files\nodejs\node.exe",
+]
+BUNDLE_NODE = "--no-node" not in sys.argv   # 默认打进去；加 --no-node 跳过（exe 会小 ~88MB）
 BUNDLE_OPT = []   # 默认不打包任何配置
 
 # config.json（含音源密钥）默认**不打进包**：
@@ -98,6 +112,29 @@ def main():
             cmd += ["--add-data", f"{src}{os.pathsep}{d}"]
         else:
             print(f"  [跳过] 目录不存在: {d}/")
+    # 洛雪音源引擎脚本
+    for rel, dest in BUNDLE_FILES.items():
+        src = HERE / rel.replace("/", os.sep)
+        if src.exists():
+            print(f"  打包脚本 {rel}  →  {dest}")
+            cmd += ["--add-data", f"{src}{os.pathsep}{dest}"]
+        else:
+            print(f"  [跳过] 缺少 {rel}（在线播放的 LX 通道将不可用）")
+    # Node 运行时（免安装在线播放的关键）
+    if BUNDLE_NODE:
+        node_exe = next((p for p in NODE_CANDIDATES if os.path.exists(p)), None)
+        if not node_exe:
+            import shutil as _sh
+            node_exe = _sh.which("node")
+        if node_exe and os.path.exists(node_exe):
+            mb = os.path.getsize(node_exe) / 1048576
+            print(f"  打包 Node 运行时 {node_exe}  ({mb:.1f} MB)  ← 在线播放必需")
+            cmd += ["--add-data", f"{node_exe}{os.pathsep}node/"]
+        else:
+            print("  [警告] 找不到 node.exe → exe 里在线播放只能靠 HYW/跨源通道")
+            print("         想打进去：装 Node 后重跑，或改 NODE_CANDIDATES 路径")
+    else:
+        print("  [--no-node] 跳过 Node 运行时（exe 更小，但免安装环境下在线播放会退化）")
     for f in BUNDLE_OPT:
         src = HERE / f
         if src.exists():

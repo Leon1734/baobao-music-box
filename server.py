@@ -96,6 +96,83 @@ def _song_extra_put(key, val):
     _SONG_EXTRA[key] = val
 
 
+def _song_extra_get(key):
+    return _SONG_EXTRA.get(key)
+
+
+# ---------- 洛雪本地源常驻服务（lx-daemon）----------
+LX_DAEMON_PORT = 7373
+
+def _lx_alive():
+    """lx-daemon 是否在跑（health 探测，3 秒超时）"""
+    try:
+        req = urllib.request.Request(f'http://127.0.0.1:{LX_DAEMON_PORT}/health')
+        with urllib.request.urlopen(req, timeout=3, context=ctx) as r:
+            d = json.loads(r.read().decode('utf-8'))
+            return bool(d.get('ok'))
+    except Exception:
+        return False
+
+def _lx_ensure_daemon():
+    """确保 lx-daemon 在跑。serve() 启动时异步调用。
+
+    Node 查找顺序（决定免安装 exe 能不能在线播放的关键）：
+      1. exe 同级 node/  —— 用户自己放的便携版
+      2. 打包内置 node/  —— build_exe.py 打进去的（exe 场景必命中）
+      3. 系统 PATH 的 node —— 源码运行场景
+    拉不起来就静默放弃 —— 取链链路会自动跳过 LX 通道，不影响 HYW/跨源/直链。"""
+    if _lx_alive():
+        print('[LX] daemon 已在运行', flush=True)
+        return True
+    import subprocess, shutil
+    node = None
+    for base in (DATA_DIR, RES_DIR):
+        for cand in (base / 'node' / 'node.exe', base / 'node.exe'):
+            if cand.exists():
+                node = str(cand); break
+        if node: break
+    if not node:
+        node = shutil.which('node')
+    if not node:
+        print('[LX] 未找到 Node，跳过本地洛雪源（在线播放仍可用 HYW/跨源通道）', flush=True)
+        return False
+    daemon = None
+    for base in (DATA_DIR, RES_DIR):
+        for cand in (base / 'tools' / 'lx-daemon.js', base / 'lx-daemon.js'):
+            if cand.exists():
+                daemon = cand
+                break
+        if daemon: break
+    if not daemon:
+        print('[LX] 找不到 lx-daemon.js，跳过本地洛雪源', flush=True)
+        return False
+    # 音源目录：exe 同级「音源/」优先（用户可放自己的源），其次包内
+    sources = None
+    for base in (DATA_DIR, RES_DIR):
+        if (base / '音源').is_dir():
+            sources = str(base / '音源'); break
+    env = dict(os.environ)
+    if sources:
+        env['MB_SOURCES'] = sources
+    try:
+        # daemon 自己会 require 同目录的 lx-loader.js
+        subprocess.Popen(
+            [node, str(daemon)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=str(daemon.parent), env=env,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        for _ in range(24):          # 源加载要 2~4s，最多等 12s
+            time.sleep(0.5)
+            if _lx_alive():
+                print(f'[LX] ✅ 本地洛雪源服务已启动（node={os.path.basename(os.path.dirname(node)) or node}）', flush=True)
+                return True
+        print('[LX] daemon 拉起超时，本次跳过', flush=True)
+        return False
+    except Exception as e:
+        print(f'[LX] daemon 启动失败: {e}', flush=True)
+        return False
+
+
 def _seed_kids_cache():
     """首次运行：把打包内预热的 kids_cache.json 播种到数据目录。
     exe 用户第一次打开「儿童乐园」本来要等十几秒去上游重建，播种后立即有内容。"""
@@ -261,6 +338,7 @@ class H(http.server.SimpleHTTPRequestHandler):
             if path == '/api/boards': return self.j(self._boards(Q.get('source','all')))
             if path == '/api/board': return self.j(self._board(Q.get('id','93'), int(Q.get('page','1')), Q.get('source','kw')))
             if path == '/api/hot': return self.j(self._hot())
+            if path == '/api/suggest': return self.j(self._suggest(Q.get('kw','')))
             if path == '/api/tj': return self.j(self._tj(Q.get('source','kw')))
             if path == '/api/kids': return self.j(self._kids(Q.get('refresh') == '1'))
             if path == '/api/kids/catalog': return self.j(self._kids_catalog())
@@ -360,6 +438,55 @@ class H(http.server.SimpleHTTPRequestHandler):
         for k in keys:
             res.setdefault(k, [])
         return res
+
+    def _get_raw(self, url, headers=None, timeout=15, retries=2):
+        """GET 取原始字节（_get 的 raw 版，给非 JSON 响应用，如 QQ smartbox 的 JSONP）。
+        重试/UA 逻辑与 _get 一致，由 _get 调用时复用编码判断。"""
+        last = None
+        for attempt in range(retries + 1):
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            if headers:
+                for k,v in headers.items(): req.add_header(k, v)
+            try:
+                with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                    return r.read()
+            except Exception as e:
+                last = e
+                if isinstance(e, urllib.error.HTTPError):
+                    break
+                if attempt < retries:
+                    import time as _t; _t.sleep(0.5 * (attempt + 1))
+        if last: print(f'[GET-RAW] {url[:80]} 失败: {type(last).__name__}')
+        return b''
+
+    def _post_json(self, url, data, headers=None, timeout=15, retries=2):
+        """POST 取 JSON（body 是 form-encoded bytes）。结构与 _get 相同的坏字回退逻辑。"""
+        last = None
+        for attempt in range(retries + 1):
+            req = urllib.request.Request(url, data=data, method='POST')
+            req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+            if headers:
+                for k,v in headers.items(): req.add_header(k, v)
+            try:
+                with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                    raw = r.read()
+                try:
+                    text = raw.decode('utf-8')
+                except UnicodeDecodeError:
+                    t_utf = raw.decode('utf-8', 'replace')
+                    bad = t_utf.count('\ufffd')
+                    text = t_utf if bad <= max(3, len(raw) // 200) else raw.decode('gbk', 'replace')
+                return json.loads(text)
+            except urllib.error.HTTPError:
+                return None
+            except Exception as e:
+                last = e
+                if attempt < retries:
+                    import time as _t; _t.sleep(0.5 * (attempt + 1))
+        print(f'[POST] {url[:80]} 失败: {type(last).__name__}')
+        return None
 
     def _get(self, url, headers=None, timeout=15, retries=2):
         """GET 取 JSON。带重试 —— 本机 DNS/网络会瞬时抖动
@@ -494,6 +621,7 @@ class H(http.server.SimpleHTTPRequestHandler):
         {'key':'wy', 'name':'网易云', 'icon':'☁️'},
         {'key':'tx', 'name':'QQ音乐', 'icon':'🐧'},
         {'key':'kg', 'name':'酷狗',   'icon':'🐶'},
+        {'key':'mg', 'name':'咪咕',   'icon':'咪'},   # 2026-10：第五平台（搜索/封面/歌词直链自带）
     ]
 
     def _search_one(self, src, kw, limit, page):
@@ -515,8 +643,12 @@ class H(http.server.SimpleHTTPRequestHandler):
 
             if src == 'wy':
                 offset = (page - 1) * limit
-                url = f'https://music.163.com/api/search/get/web?s={urllib.parse.quote(kw)}&type=1&offset={offset}&limit={limit}'
-                d = self._get(url, {'Referer':'https://music.163.com/'}, timeout=8, retries=1)
+                # ⚠ 2026-10：网易 GET /api/search/get/web 的 result 已变成加密字符串
+                #   （返回 {"result":"35b17489..."}）—— 旧 GET 形态静默 0 首。
+                #   换 POST 明文 /api/search/get/（实测可用，返回正常 songs 数组）。
+                url = f'https://music.163.com/api/search/get/'
+                data = urllib.parse.urlencode({'s': kw, 'type': 1, 'offset': offset, 'limit': limit}).encode()
+                d = self._post_json(url, data, {'Referer':'https://music.163.com/'}, timeout=8, retries=1)
                 out = []
                 for s in (((d or {}).get('result') or {}).get('songs') or []):
                     sid = str(s.get('id') or '')
@@ -563,6 +695,37 @@ class H(http.server.SimpleHTTPRequestHandler):
                                 'artist':s.get('SingerName',''),'album':s.get('AlbumName',''),
                                 'duration':int(s.get('Duration',0) or 0),'source':'kg'})
                 return out
+
+            if src == 'mg':
+                # 咪咕 MIGUM2.0 搜索（2026-10 实测可用；字段：id/name/singers/albums/imgItems）
+                # id 是数字 songId，copyrightId 是版权 ID —— 都喂给 HYW 试过，行为一致。
+                url = (f'https://app.c.nf.migu.cn/MIGUM2.0/v1.0/content/search_all.do'
+                       f'?text={urllib.parse.quote(kw)}&pageNo={page}&pageSize={limit}'
+                       f'&searchSwitch=%7B%22song%22%3A1%7D')
+                d = self._get(url, {'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36',
+                                    'Referer': 'https://m.music.migu.cn/'}, timeout=8, retries=1)
+                lst = (((d or {}).get('songResultData') or {}).get('result')) or []
+                out = []
+                for s in lst:
+                    sid = str(s.get('id') or '') or str(s.get('copyrightId') or '')
+                    if not sid: continue
+                    imgs = s.get('imgItems') or []
+                    pic = ''
+                    for im in imgs:
+                        if im.get('imgSizeType') == '02':      # 02 = 中图，列表够用
+                            pic = im.get('img') or ''; break
+                    if not pic and imgs:
+                        pic = imgs[0].get('img') or ''
+                    singers = '/'.join(x.get('name','') for x in s.get('singers') or [])
+                    albums  = (s.get('albums') or [{}])
+                    # lyricUrl 是咪咕自带的歌词直链，取词时可零成本直接拉
+                    lyr = s.get('lyricUrl') or ''
+                    if lyr:
+                        _song_extra_put(('mg', sid), {'lyricUrl': lyr, 'pic': pic})
+                    out.append({'id':sid,'songmid':sid,'name':s.get('name',''),
+                                'artist':singers,'album':albums[0].get('name',''),
+                                'duration':0,'source':'mg','pic':pic})
+                return out
         except Exception as e:
             print(f'[SEARCH] {src} 失败: {type(e).__name__}: {e}')
         return []
@@ -608,6 +771,22 @@ class H(http.server.SimpleHTTPRequestHandler):
                 'counts': counts, 'has_more': has_more, 'per_source': per}
 
     # ====== HYW音源获取播放URL ======
+    def _lx_url(self, src, sid, name, artist, quality, timeout=16, extra=None):
+        """本地洛雪音源常驻服务（tools/lx-daemon.js，需 Node）。
+        HYW 服务器（103.79.184.97）不稳定时的主力取链通道。
+        daemon 不在时返回 None（链路自动跳过，不影响其它通道）。"""
+        try:
+            q = urllib.parse.urlencode({'source': src, 'id': sid, 'quality': quality,
+                                        'name': name or '', 'artist': artist or '',
+                                        'hash': (extra or {}).get('h320') or (extra or {}).get('h128') or ''})
+            d = self._get(f'http://127.0.0.1:{LX_DAEMON_PORT}/geturl?{q}', timeout=timeout, retries=0)
+            if d and d.get('url'):
+                return {'url': d['url'], 'source': src, 'via': 'lx:' + (d.get('via') or '?'),
+                        'quality': d.get('quality', quality)}
+        except Exception:
+            pass
+        return None
+
     def _hyw_url(self, src, sid, name, artist, quality, timeout=8, extra=None):
         """调 HYW 接口取链接。成功返回 {url,source,quality}，失败返回 None"""
         params = {'songId': sid, 'source': src, 'key': HYW_KEY, 'quality': quality}
@@ -638,9 +817,26 @@ class H(http.server.SimpleHTTPRequestHandler):
                 req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
                 with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
                     txt = r.read().decode('utf-8','replace').strip()
-                if txt.startswith('http'): return {'url': txt, 'source': 'kw', 'via': 'direct'}
+                if txt.startswith('http'):
+                    # ⚠ antiserver 对任何 rid 都返回音频 —— VIP 歌拿到的是「无法播放」占位音
+                    #   （合法 MP3、ID3 全对，~180KB/11 秒）。必须验总长：真歌 ≥ 1MB。
+                    rq = urllib.request.Request(txt, headers={'User-Agent':'Mozilla/5.0','Range':'bytes=0-0'})
+                    with urllib.request.urlopen(rq, timeout=timeout, context=ctx) as r2:
+                        cr = r2.headers.get('Content-Range') or ''
+                        total = int((cr.split('/')[-1] if '/' in cr else '0').strip() or 0)
+                    if total and total < 1048576:
+                        return None           # 占位音频，不当兜底
+                    return {'url': txt, 'source': 'kw', 'via': 'direct'}
             elif src in ('wy','netease'):
-                return {'url': f'https://music.163.com/song/media/outer/url?id={sid}.mp3', 'source':'wy','via':'direct'}
+                # ⚠ music.163.com outer/url 外链对 VIP 歌返回 404 HTML（HTTP 200 但 body 是网页）
+                u = f'https://music.163.com/song/media/outer/url?id={sid}.mp3'
+                rq = urllib.request.Request(u, headers={'User-Agent':'Mozilla/5.0','Range':'bytes=0-2047'})
+                with urllib.request.urlopen(rq, timeout=timeout, context=ctx) as r:
+                    head = r.read(2048)
+                if head[:3] == b'ID3' or (head and head[0] == 0xff and (head[1] & 0xe0) == 0xe0) \
+                   or head[4:8] == b'ftyp' or head[:4] == b'fLaC':
+                    return {'url': u, 'source':'wy','via':'direct'}
+                return None
         except Exception as e:
             print(f'[URL] {src} 直链兜底失败: {e}')
         return None
@@ -662,9 +858,18 @@ class H(http.server.SimpleHTTPRequestHandler):
         # 先按歌名相似度排（同名优先），逐个试链接
         base = (name or '').strip().lower().replace(' ', '')
         cands.sort(key=lambda s: 0 if base and base in (s.get('name','').strip().lower().replace(' ','')) else 1)
-        for s in cands[:6]:
+        for s in cands[:4]:            # 候选 6→4：每个候选 LX(8s)+HYW(7s)，6 个最坏 90s 太久
+            ex = _SONG_EXTRA.get((s['source'], s['id']))
+            # ⚠ 跨源也必须先走 LX 本地源：HYW 挂掉时若只试 HYW，跨源等于没做 ——
+            #   这就是「不能播放也不切音源」的直接原因。
+            got = self._lx_url(s['source'], s['id'], s.get('name',''), s.get('artist',''), quality,
+                               timeout=8, extra=ex)
+            if got:
+                got['via'] = 'cross-lx'
+                got['from'] = s.get('name','') + (' - ' + s.get('artist','') if s.get('artist') else '')
+                return got
             got = self._hyw_url(s['source'], s['id'], s.get('name',''), s.get('artist',''), quality,
-                                timeout=7, extra=_SONG_EXTRA.get((s['source'], s['id'])))
+                                timeout=7, extra=ex)
             if got:
                 got['via'] = 'cross'
                 got['from'] = s.get('name','') + (' - ' + s.get('artist','') if s.get('artist') else '')
@@ -681,6 +886,11 @@ class H(http.server.SimpleHTTPRequestHandler):
             quality = '320k'
         if src in ('netease',): src = 'wy'
         extra = _SONG_EXTRA.get((src, sid))
+
+        # 0) 本地洛雪源常驻服务（lx-daemon，127.0.0.1:7373）—— HYW 服务器挂掉时的主力。
+        #    洛雪客户端能播就是靠这些本地 JS；加载一次常驻后取链 0~15s（有缓存时 0ms）。
+        got = self._lx_url(src, sid, name, artist, quality, extra=extra)
+        if got: return got
 
         # 1) 原平台，短超时先试（HYW 时快时慢：0.3s ~ 12s）
         got = self._hyw_url(src, sid, name, artist, quality, timeout=8, extra=extra)
@@ -746,6 +956,18 @@ class H(http.server.SimpleHTTPRequestHandler):
             pass
         return None
 
+    def _lyric_migu(self, url):
+        """咪咕歌词直链（搜索结果自带 lyricUrl）。返回格式与其它源一致（键 lyric）。"""
+        try:
+            raw = self._get_raw(url, timeout=8, retries=1)
+            if not raw: return None
+            text = raw.decode('utf-8', 'replace')
+            if '[' not in text or len(text) < 50: return None      # 不是 LRC
+            return {'lyric': text, 'source': 'migu-direct'}
+        except Exception as e:
+            print(f'[LYRIC] migu 失败: {e}')
+            return None
+
     def _lyric_hyw(self, src, sid):
         try:
             params = {'action':'lyric','source':src,'songId':sid,'key':HYW_KEY}
@@ -779,6 +1001,11 @@ class H(http.server.SimpleHTTPRequestHandler):
             cands.append((0, 'kuwo', lambda: self._lyric_kuwo(sid)))
         elif src == 'wy':
             cands.append((0, 'netease', lambda: self._lyric_netease_direct(sid)))
+        elif src == 'mg':
+            # 咪咕：搜索时存下的 lyricUrl 直链，零成本拉词
+            ex = _song_extra_get(('mg', sid)) or {}
+            if ex.get('lyricUrl'):
+                cands.append((0, 'migu-direct', lambda: self._lyric_migu(ex['lyricUrl'])))
         if name:
             cands.append((1, 'netease-fallback', lambda: self._lyric_netease_search(name, artist)))
         cands.append((2, 'hyw', lambda: self._lyric_hyw(src, sid)))
@@ -875,6 +1102,11 @@ class H(http.server.SimpleHTTPRequestHandler):
             d = self._get(f'https://music.163.com/api/song/detail?id={sid}&ids=[{sid}]', {'Referer':'https://music.163.com/'})
             if d and d.get('songs') and d['songs'][0].get('album',{}).get('picUrl'):
                 return {'url': d['songs'][0]['album']['picUrl']}
+        if src == 'mg':
+            # 咪咕：搜索结果自带封面直链（imgItems.02），直接返回
+            ex = _song_extra_get(('mg', sid)) or {}
+            if ex.get('pic'):
+                return {'url': ex['pic']}
         return {'url': ''}
 
     # ====== 批量封面（减少请求数）======
@@ -1066,19 +1298,60 @@ class H(http.server.SimpleHTTPRequestHandler):
 
     # ====== 热搜词 ======
     def _hot(self):
-        # 酷我热搜返回TEXT格式: "TEXT=word1\r\nword2\r\n..."
-        try:
+        """多平台热搜聚合（2026-10 起）：酷我(文本) + QQ + 网易 并行，_pmap 兜底。
+        单一来源时热搜会随该平台接口挂掉而全空 —— 聚合后至少一家活着就有词。"""
+        def _kw():
             req = urllib.request.Request('http://hotword.kuwo.cn/hotword.s?prodid=2&type=11&encoding=utf8')
             req.add_header('User-Agent', 'Mozilla/5.0')
             with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
                 text = r.read().decode('utf-8', errors='ignore')
-            if text.startswith('TEXT='):
-                text = text[5:]
-            words = [w.strip() for w in text.replace('\r','').split('\n') if w.strip()]
-            return {'words': words[:20]}
-        except Exception as e:
-            print(f'[HOT] {e}')
-        return {'words':[]}
+            if text.startswith('TEXT='): text = text[5:]
+            return [w.strip() for w in text.replace('\r','').split('\n') if w.strip()][:20]
+        def _tx():
+            d = self._get('https://c.y.qq.com/splcloud/fcgi-bin/gethotkey.fcg?format=json',
+                          {'Referer':'https://y.qq.com/'}, timeout=8, retries=1)
+            lst = (d or {}).get('data', {}).get('hotkey') or []
+            return [k.get('k','').strip() for k in lst if (k.get('k') or '').strip()][:20]
+        def _wy():
+            d = self._get('https://music.163.com/api/search/hot?type=1111',
+                          {'Referer':'https://music.163.com/'}, timeout=8, retries=1)
+            hots = (((d or {}).get('result') or {}).get('hots')) or []
+            return [h.get('first','').strip() for h in hots if (h.get('first') or '').strip()][:20]
+        results = self._pmap({'kw': _kw, 'tx': _tx, 'wy': _wy}, deadline=6.0, grace=2.0)
+        # 轮转交错：kw1 tx1 wy1 kw2 tx2 wy2...（与搜索合并同思路，各平台都能露脸）
+        words, seen = [], set()
+        maxn = max((len(results.get(k) or []) for k in ('kw','tx','wy')), default=0)
+        for i in range(maxn):
+            for k in ('kw','tx','wy'):
+                lst = results.get(k) or []
+                if i < len(lst) and lst[i] not in seen:
+                    seen.add(lst[i]); words.append(lst[i])
+        return {'words': words[:30], 'counts': {k: len(results.get(k) or []) for k in ('kw','tx','wy')}}
+
+    def _suggest(self, kw):
+        """搜索联想：QQ smartbox + 网易 suggest 双源并行，快速返回。"""
+        if not kw or len(kw.strip()) < 1: return {'words': []}
+        kw = kw.strip()
+        def _tx():
+            import json as _j
+            u = f'https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg?_={int(time.time()*1000)}&key={urllib.parse.quote(kw)}'
+            raw = self._get_raw(u, {'Referer':'https://y.qq.com/'}, timeout=5, retries=1)
+            if not raw: return []
+            d = _j.loads(raw.decode('utf-8','replace').strip())
+            items = (((d.get('data') or {}).get('song') or {}).get('itemlist')) or []
+            return [f"{x.get('name','')} {x.get('singer','')}".strip() for x in items if x.get('name')][:8]
+        def _wy():
+            d = self._get(f'https://music.163.com/api/search/suggest/web?s={urllib.parse.quote(kw)}',
+                          {'Referer':'https://music.163.com/'}, timeout=5, retries=1)
+            songs = (((d or {}).get('result') or {}).get('songs')) or []
+            return [x.get('name','') for x in songs if x.get('name')][:8]
+        results = self._pmap({'tx': _tx, 'wy': _wy}, deadline=4.0, grace=1.0)
+        words, seen = [], set()
+        for k in ('tx','wy'):
+            for w in results.get(k) or []:
+                if w and w not in seen:
+                    seen.add(w); words.append(w)
+        return {'words': words[:10]}
 
     # ====== 推荐歌单 ======
     def _tj_one(self, src, limit=30):
@@ -1579,6 +1852,8 @@ def serve():
     _lyric_cache_load()
     _seed_kids_cache()
     threading.Thread(target=_lyric_cache_flusher, daemon=True).start()
+    # 洛雪本地源常驻服务：HYW 挂掉时的主力取链通道（异步拉起，不阻塞启动）
+    threading.Thread(target=_lx_ensure_daemon, daemon=True, name='lx-daemon-starter').start()
     # 服务线程 + 主线程守护：子线程无论因何退出（异常/端口被占/未知错误），
     # 主线程都能把它重新拉起，进程永不静默死掉
     while True:

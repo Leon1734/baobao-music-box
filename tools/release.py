@@ -10,13 +10,13 @@ token 从 git credential 取，只在本进程内使用，绝不打印或落盘�
 import subprocess, json, ssl, os, sys, mimetypes, urllib.request, urllib.error
 
 REPO = "Leon1734/baobao-music-box"
-TAG = "v1.2.3"
-NAME = "宝宝音乐盒 v1.2.3 · 修复：无边框窗口没有标题栏按钮、拖不动"
+TAG = "v1.3.0"
+NAME = "宝宝音乐盒 v1.3.0 · 播放链路重做：本地洛雪音源引擎 + 免安装自带 Node"
 EXE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "dist", "宝宝音乐盒.exe")
-ASSET_NAME = "baobao-music-box-v1.2.3-win64.exe"   # 必须 ASCII，中文名会被 GitHub 吞掉
+ASSET_NAME = "baobao-music-box-v1.3.0-win64.exe"   # 必须 ASCII，中文名会被 GitHub 吞掉
 
-NOTES = """## 宝宝音乐盒 v1.2.3
+NOTES = """## 宝宝音乐盒 v1.3.0
 
 ### ⚡ 性能修复（本次重点）
 
@@ -55,7 +55,7 @@ NOTES = """## 宝宝音乐盒 v1.2.3
 ### 📦 下载
 | 平台 | 文件 |
 |------|------|
-| Windows | `baobao-music-box-v1.2.3-win64.exe`（免安装单文件，双击即用，照片/音源/壁纸全内置）|
+| Windows | `baobao-music-box-v1.3.0-win64.exe`（免安装单文件，双击即用，照片/音源/壁纸全内置）|
 | Android | `baobao-music-box-v1.2.1-android.apk`（侧载安装，Android 7.0+）|
 
 > 不含任何第三方凭据；320k 播放不校验密钥，功能无损失。

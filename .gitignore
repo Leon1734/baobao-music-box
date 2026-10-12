@@ -49,7 +49,9 @@ _start.bat
 server.js
 test_lx.js
 gen_html.py
-lx-loader.js
+
+# 注意：tools/lx-loader.js 和 tools/lx-daemon.js 是在线播放的核心组件，
+# 必须入库（免安装 exe 打包要用）。不要再往这里加 lx-*.js 忽略规则。
 
 # ===== Android 构建产物 =====
 android/.gradle/
